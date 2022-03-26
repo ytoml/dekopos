@@ -1,0 +1,5 @@
+[workspace]
+members = [
+    "hello/day01",
+    "hello/literal-expander",
+]

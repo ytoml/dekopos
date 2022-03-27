@@ -7,74 +7,62 @@ extern crate alloc;
 extern crate uefi_services;
 
 use log::info;
-use uefi::table::runtime::ResetType;
-use uefi::{prelude::*, CString16};
-use uefi::proto::media::file::{File, FileAttribute, FileMode, FileType, RegularFile};
-use uefi::table::boot::MemoryDescriptor;
+use uefi::prelude::*;
+
+mod boot;
+mod fs;
+mod graphic;
 
 const MEMMAP_SIZE: usize = 4096 * 4;
 
 #[entry]
-fn efi_main(img: Handle, mut systab: SystemTable<Boot>) -> Status {
+fn efi_main(image: Handle, mut systab: SystemTable<Boot>) -> Status {
     uefi_services::init(&mut systab).unwrap(); // initialization for alloc/logger
+    reset!(systab, stdout, false);
+    let boot = systab.boot_services();
 
     info!("getting memory map...");
-    let mut mapbuf = [0u8; MEMMAP_SIZE];
-    let (_map, memdesc) = systab
-        .boot_services()
-        .memory_map(&mut mapbuf)
+    let mut mmap_buf = [0u8; MEMMAP_SIZE];
+    assert!(mmap_buf.len() > boot.memory_map_size().map_size);
+
+    let (_, _) = boot
+        .memory_map(&mut mmap_buf)
         .expect("failed to get memmap");
 
+    info!("getting graphic output protocol...");
+    let gop = graphic::open_gop(boot).expect("failed to open graphic output protocol.");
+    let gop = unsafe { &mut *gop.get() };
+    let mode = gop.current_mode_info();
+    info!(
+        "Resolution: (w, h)={:?}, Pixel Format: {:?}, {} px/line",
+        mode.resolution(),
+        mode.pixel_format(),
+        mode.stride()
+    );
+    graphic::paint_white_all(gop);
+
     info!("accessing file system...");
-    let mut root = {
-        let fs = systab
-            .boot_services()
-            .get_image_file_system(img)
-            .expect("failed to get fs.");
-        unsafe { &mut *fs.interface.get() }
-            .open_volume()
-            .expect("failed to open volume.")
-    };
+    let mut root = fs::open_root_dir(image, boot).expect("failed to open root directory");
 
-    info!("opening file...");
-    let filename = CString16::try_from("memmap").unwrap();
-    let file = match root
-        .open(&filename, FileMode::CreateReadWrite, FileAttribute::empty())
-        .expect("failed to open file \"memmap\".")
-        .into_type()
-        .unwrap()
-    {
-        FileType::Regular(file) => file,
-        FileType::Dir(_) => panic!("entry for \"memmap\" is already exists as a directory."),
-    };
+    info!("loading kernel file...");
+    let entry = boot::load_kernel(&mut root, boot).expect("failed to loading kernel.");
 
-    info!("saving memmap...");
-    save_memmap(memdesc, file);
-    info!("succeeded.");
+    info!("exit boot service...");
+    let _ = boot::exit_boot_services(image, systab).expect("failed to exit boot service.");
 
-    systab.boot_services().stall(3_000_000);
-    systab.stdout().reset(false).unwrap();
-    systab.runtime_services().reset(ResetType::Shutdown, Status::SUCCESS, None);
+    info!("calling kernel entry...");
+    entry();
+
+    #[allow(clippy::empty_loop)]
+    loop {}
 }
 
-const HEADER: &[u8; 65] = b"Index, Type, Type(name), PhysicalStart, NumberOfPages, Attribute\n";
-
-fn save_memmap<'a, M>(desc: M, mut file: RegularFile)
-where
-    M: ExactSizeIterator<Item = &'a MemoryDescriptor> + Clone,
-{
-    // It is OK to write u8 because user will read this file through other machine rather than this application runs on (e.g. Host for QEMU).
-    file.write(HEADER).expect("failed to write to file.");
-    for (i, d) in desc.enumerate() {
-        let line = format!(
-            "{}, {:#x}, {:?}, {:#08x}, {:#x}, {:#x}\n",
-            i,
-            d.ty.0,
-            d.ty,
-            d.phys_start,
-            d.virt_start,
-            d.att.bits().clamp(0, 0xfffff)
-        );
-        file.write(line.as_bytes()).expect("failed to write to file.");
-    }
+#[macro_export]
+macro_rules! reset {
+    ($system_table:ident, $stdio:ident, $extended:literal) => {{
+        $system_table
+            .$stdio()
+            .reset($extended)
+            .expect(concat!("failed to reset ", stringify!($ident)));
+    }};
 }

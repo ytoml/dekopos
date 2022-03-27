@@ -1,6 +1,7 @@
 [workspace]
 members = [
-    "loader/",
+    "kernel",
+    "loader",
     "hello/day01",
     "hello/literal-expander",
 ]

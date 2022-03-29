@@ -6,8 +6,12 @@
 extern crate alloc;
 extern crate uefi_services;
 
+use core::mem;
+
 use log::info;
 use uefi::prelude::*;
+
+use common_data::graphic::FrameBuffer;
 
 mod boot;
 mod fs;
@@ -39,19 +43,25 @@ fn efi_main(image: Handle, mut systab: SystemTable<Boot>) -> Status {
         mode.pixel_format(),
         mode.stride()
     );
-    graphic::paint_white_all(gop);
+    let mut fb = FrameBuffer::from(gop);
 
     info!("accessing file system...");
     let mut root = fs::open_root_dir(image, boot).expect("failed to open root directory");
 
     info!("loading kernel file...");
-    let entry = boot::load_kernel(&mut root, boot).expect("failed to loading kernel.");
+    let entry_addr = boot::load_kernel(&mut root, boot).expect("failed to loading kernel.");
+
+    info!("entry point: {:#08x}", entry_addr as u64);
+    let entry = unsafe {
+        type EntryPoint = extern "sysv64" fn(&mut FrameBuffer);
+        mem::transmute::<*const u8, EntryPoint>(entry_addr)
+    };
 
     info!("exit boot service...");
     let _ = boot::exit_boot_services(image, systab).expect("failed to exit boot service.");
 
     info!("calling kernel entry...");
-    entry();
+    entry(&mut fb);
 
     #[allow(clippy::empty_loop)]
     loop {}

@@ -16,12 +16,10 @@ const KERNEL_BASE_ADDR: usize = 0x101000;
 const EFI_PAGE_SIZE: usize = 0x1000; // 4096 B
 const ELF_ENTRY_OFFSET: usize = 0x18;
 
-type EntryPoint = extern "sysv64" fn();
 
 /// Loading kernel executable.
 /// Return value is address of entry point.
-/// Note that this function forget about the
-pub(crate) fn load_kernel(root: &mut Directory, boot: &BootServices) -> Result<EntryPoint> {
+pub(crate) fn load_kernel(root: &mut Directory, boot: &BootServices) -> Result<*const u8> {
     let filename = CString16::try_from("kernel.elf").unwrap();
     let mut file = match root
         .open(&filename, FileMode::Read, FileAttribute::empty())?
@@ -61,9 +59,7 @@ pub(crate) fn load_kernel(root: &mut Directory, boot: &BootServices) -> Result<E
     let entryinfo_ptr =
         (KERNEL_BASE_ADDR as *const u8).wrapping_add(ELF_ENTRY_OFFSET) as *const u64;
     Ok(unsafe {
-        let entry_addr_u64 = entryinfo_ptr.read();
-        info!("entry point: {:#08x}", entry_addr_u64);
-        mem::transmute::<u64, EntryPoint>(entry_addr_u64)
+        entryinfo_ptr.read() as *const u8
     })
 }
 

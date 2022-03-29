@@ -2,6 +2,7 @@
 members = [
     "kernel",
     "loader",
+    "common-data",
     "hello/day01",
     "hello/literal-expander",
 ]

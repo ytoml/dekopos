@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+common-data = { version = "0.1.0", path = "../common-data", features = ["uefi_imp"] }
 log = "0.4.16"
 uefi = { version = "0.15.2", features = ["alloc", "exts", "logger"] }
 uefi-services = "0.12.1"

@@ -16,3 +16,4 @@ log
 /**/.vscode
 /**/artifacts
 /**/assets
+!/kernel/assets

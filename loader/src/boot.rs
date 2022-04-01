@@ -1,6 +1,7 @@
 use core::mem;
 use core::slice;
 
+use goblin::elf::{program_header, Elf};
 use log::info;
 use uefi::data_types::Align;
 use uefi::proto::media::file::{Directory, File, FileAttribute, FileInfo, FileMode, FileType};
@@ -15,7 +16,6 @@ const KERNEL_BASE_ADDR: usize = 0x101000;
 // const KERNEL_BASE_ADDR: usize = 0x100000;
 const EFI_PAGE_SIZE: usize = 0x1000; // 4096 B
 const ELF_ENTRY_OFFSET: usize = 0x18;
-
 
 /// Loading kernel executable.
 /// Return value is address of entry point.
@@ -43,24 +43,51 @@ pub(crate) fn load_kernel(root: &mut Directory, boot: &BootServices) -> Result<*
         .expect("cannot get file info")
         .file_size() as usize;
 
+    let mut src = vec![0; size];
+    let _ = file.read(&mut src).expect("cannot read kernel executable.");
+    load_elf(&src, boot)
+}
+
+pub(crate) fn load_elf(src: &[u8], boot: &BootServices) -> Result<*const u8> {
+    let elf = Elf::parse(src).expect("failed to parse elf");
+    let load_segments = elf
+        .program_headers
+        .iter()
+        .filter(|ph| ph.p_type == program_header::PT_LOAD);
+
+    let mut start_addr = usize::MAX;
+    let mut end_addr = usize::MIN;
+    for ph in load_segments {
+        start_addr = start_addr.min(ph.p_vaddr as usize);
+        end_addr = end_addr.max((ph.p_vaddr + ph.p_memsz) as usize);
+    }
+    let kern_size = (end_addr - start_addr) as usize;
     let _ = boot.allocate_pages(
-        AllocateType::Address(KERNEL_BASE_ADDR),
+        AllocateType::Address(start_addr),
         MemoryType::LOADER_DATA,
-        (size + EFI_PAGE_SIZE - 1) / EFI_PAGE_SIZE, // Round upping
+        (kern_size + EFI_PAGE_SIZE - 1) / EFI_PAGE_SIZE, // Round upping
     )?;
 
-    let _ = file
-        .read(unsafe { slice::from_raw_parts_mut(KERNEL_BASE_ADDR as *mut u8, size) })
-        .expect("cannot read kernel executable.");
+    let load_segments = elf
+        .program_headers
+        .iter()
+        .filter(|ph| ph.p_type == program_header::PT_LOAD);
+    for ph in load_segments {
+        let of = ph.p_offset as usize;
+        let msiz = ph.p_memsz as usize;
+        let fsiz = ph.p_memsz as usize;
+        let vaddr = ph.p_vaddr as *mut u8;
 
-    info!("Kernel loaded: {:#08x} ({} bytes)", KERNEL_BASE_ADDR, size,);
+        let dst = unsafe { slice::from_raw_parts_mut(vaddr, msiz) };
+        dst.copy_from_slice(&src[of..of + fsiz]);
+        dst[fsiz..].fill(0);
+    }
 
-    // reinterpret the address written in address ENTRY_POINT_PTR as entrypoint function
-    let entryinfo_ptr =
-        (KERNEL_BASE_ADDR as *const u8).wrapping_add(ELF_ENTRY_OFFSET) as *const u64;
-    Ok(unsafe {
-        entryinfo_ptr.read() as *const u8
-    })
+    info!(
+        "Elf loaded: Load segment = {:#08x} - {:#08x}",
+        start_addr, end_addr
+    );
+    Ok(elf.entry as *const u8)
 }
 
 pub(crate) fn exit_boot_services(

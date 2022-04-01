@@ -15,7 +15,9 @@ mod unused {
     pub fn paint_white_all(gop: &mut GraphicsOutput) {
         let mut fb = gop.frame_buffer();
         for i in 0..fb.size() {
-            unsafe { fb.write_byte(i, 255); }
+            unsafe {
+                fb.write_byte(i, 255);
+            }
         }
     }
 }

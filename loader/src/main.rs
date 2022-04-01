@@ -51,9 +51,9 @@ fn efi_main(image: Handle, mut systab: SystemTable<Boot>) -> Status {
     info!("loading kernel file...");
     let entry_addr = boot::load_kernel(&mut root, boot).expect("failed to loading kernel.");
 
-    info!("entry point: {:#08x}", entry_addr as u64);
+    info!("entry point: {:?}", entry_addr);
     let entry = unsafe {
-        type EntryPoint = extern "sysv64" fn(&mut FrameBuffer);
+        type EntryPoint = extern "sysv64" fn(*mut FrameBuffer);
         mem::transmute::<*const u8, EntryPoint>(entry_addr)
     };
 
@@ -61,7 +61,7 @@ fn efi_main(image: Handle, mut systab: SystemTable<Boot>) -> Status {
     let _ = boot::exit_boot_services(image, systab).expect("failed to exit boot service.");
 
     info!("calling kernel entry...");
-    entry(&mut fb);
+    entry(&mut fb as *mut FrameBuffer);
 
     #[allow(clippy::empty_loop)]
     loop {}

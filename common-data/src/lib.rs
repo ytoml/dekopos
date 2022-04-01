@@ -1,3 +1,3 @@
 #![no_std]
 
-pub mod graphic;
+pub mod graphics;

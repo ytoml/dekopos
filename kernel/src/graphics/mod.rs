@@ -1,4 +1,4 @@
-use common_data::graphic::PixelFormat;
+use common_data::graphics::PixelFormat;
 
 #[macro_use]
 pub mod console;
@@ -10,7 +10,7 @@ pub use paint::*;
 /// Assume that identical memory representation to [`common_data::graphic::FrameBuffer`]
 #[derive(Debug)]
 #[repr(C)]
-pub struct FrameBuffer(::common_data::graphic::FrameBuffer);
+pub struct FrameBuffer(::common_data::graphics::FrameBuffer);
 
 impl FrameBuffer {
     #[inline]
@@ -55,8 +55,8 @@ impl<'fb> FrameBuffer {
     }
 }
 
-impl From<::common_data::graphic::FrameBuffer> for FrameBuffer {
-    fn from(fb: ::common_data::graphic::FrameBuffer) -> Self {
+impl From<::common_data::graphics::FrameBuffer> for FrameBuffer {
+    fn from(fb: ::common_data::graphics::FrameBuffer) -> Self {
         Self(fb)
     }
 }

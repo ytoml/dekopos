@@ -11,11 +11,11 @@ use core::mem;
 use log::info;
 use uefi::prelude::*;
 
-use common_data::graphic::FrameBuffer;
+use common_data::graphics::FrameBuffer;
 
 mod boot;
 mod fs;
-mod graphic;
+mod graphics;
 
 const MEMMAP_SIZE: usize = 4096 * 4;
 
@@ -34,7 +34,7 @@ fn efi_main(image: Handle, mut systab: SystemTable<Boot>) -> Status {
         .expect("failed to get memmap");
 
     info!("getting graphic output protocol...");
-    let gop = graphic::open_gop(boot).expect("failed to open graphic output protocol.");
+    let gop = graphics::open_gop(boot).expect("failed to open graphic output protocol.");
     let gop = unsafe { &mut *gop.get() };
     let mode = gop.current_mode_info();
     info!(

@@ -5,11 +5,11 @@ use core::arch::asm;
 use core::panic::PanicInfo;
 
 #[macro_use]
-mod graphic;
+mod graphics;
 mod services;
 
 #[no_mangle]
-pub extern "sysv64" fn kernel_main(fb: *mut ::common_data::graphic::FrameBuffer) {
+pub extern "sysv64" fn kernel_main(fb: *mut ::common_data::graphics::FrameBuffer) {
     services::init(fb);
     paint_all_chars();
     hello_kernel();

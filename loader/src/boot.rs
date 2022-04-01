@@ -9,13 +9,7 @@ use uefi::table::boot::{AllocateType, MemoryDescriptor, MemoryType};
 use uefi::table::Runtime;
 use uefi::{prelude::*, CString16, Result};
 
-// Ugly hack?:
-// According to elf header, it seems to be better to load elf at 0x101000 rather than at 0x100000,
-// while link option specifies base address as 0x100000...
-const KERNEL_BASE_ADDR: usize = 0x101000;
-// const KERNEL_BASE_ADDR: usize = 0x100000;
 const EFI_PAGE_SIZE: usize = 0x1000; // 4096 B
-const ELF_ENTRY_OFFSET: usize = 0x18;
 
 /// Loading kernel executable.
 /// Return value is address of entry point.

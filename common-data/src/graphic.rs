@@ -37,7 +37,7 @@ impl<'gop> From<&mut uefi::proto::console::gop::GraphicsOutput<'gop>> for FrameB
             size,
             stride: mode.stride(),
             resolution: mode.resolution(),
-            format: mode.pixel_format().into()
+            format: mode.pixel_format().into(),
         }
     }
 }
@@ -49,7 +49,7 @@ impl From<uefi::proto::console::gop::PixelFormat> for PixelFormat {
         match fmt {
             UefiPixelFormat::Bgr => PixelFormat::Bgr,
             UefiPixelFormat::Rgb => PixelFormat::Rgb,
-            _ => unimplemented!()
+            _ => unimplemented!(),
         }
     }
 }

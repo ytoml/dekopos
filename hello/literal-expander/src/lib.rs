@@ -73,7 +73,7 @@ impl ConfirmString for Literal {
                     Some('t') => ret.push('\t'),
                     Some(c) => todo!("SORRY: Escape sequence {} is not supported now.", c),
                     None => panic!("malformed literal (unexpected EOS)"),
-                }
+                },
                 Some(c) => ret.push(c),
                 None => panic!("malformed literal (unexpected EOS)"),
             }

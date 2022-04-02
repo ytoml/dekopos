@@ -8,6 +8,8 @@ build = "build.rs"
 
 [dependencies]
 common-data = { version = "0.1.0", path = "../common-data" }
+derive_more = { version = "0.99.17", default-features = false, features = ["add", "add_assign", "not"] }
+num-traits = { version = "0.2.14", default-features = false }
 
 [build-dependencies]
 thiserror = { version = "1.0" }

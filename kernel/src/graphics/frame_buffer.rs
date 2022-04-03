@@ -1,7 +1,7 @@
 use common_data::graphics::PixelFormat;
 
-use super::{Rgb, Bgr, Color, Draw, Paint, Position, Offset};
 use super::font;
+use super::{Bgr, Color, Draw, Offset, Paint, Position, Rgb};
 
 /// Assume that identical memory representation to [`common_data::graphic::FrameBuffer`]
 #[derive(Debug)]
@@ -53,12 +53,12 @@ impl From<::common_data::graphics::FrameBuffer> for FrameBuffer {
     }
 }
 
-type Drawer = fn(&mut [u8], Color);
-type DrawerWithLifeTime<'a> = fn(&'a mut [u8], Color);
+type Painter = fn(&mut [u8], Color);
+type PainterWithLifeTime<'a> = fn(&'a mut [u8], Color);
 
 pub struct FrameBufDrawer<'fb> {
     pub(super) fb: &'fb mut FrameBuffer,
-    pub(super) painter: Drawer,
+    pub(super) painter: Painter,
 }
 
 impl<'fb> FrameBufDrawer<'fb> {
@@ -104,7 +104,7 @@ impl<'fb> core::fmt::Debug for FrameBufDrawer<'fb> {
     fn fmt<'a>(&'a self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("FrameBufDrawer")
             .field("fb", &self.fb)
-            .field("painter", &self.painter as &DrawerWithLifeTime<'a>)
+            .field("painter", &self.painter as &PainterWithLifeTime<'a>)
             .finish()
     }
 }

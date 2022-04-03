@@ -11,15 +11,17 @@ pub trait Draw {
     fn draw_pixel(&mut self, p: Position, color: Color);
 
     fn draw_rect(&mut self, upper_left: Position, lower_right: Position, color: Color) {
-        if upper_left.x == lower_right.x || upper_left.y == lower_right.y { return; }
+        if upper_left.x == lower_right.x || upper_left.y == lower_right.y {
+            return;
+        }
         for x in upper_left.x..lower_right.x {
             self.draw_pixel(Position::new(x, upper_left.y), color);
-            self.draw_pixel(Position::new(x, lower_right.y-1), color);
+            self.draw_pixel(Position::new(x, lower_right.y - 1), color);
         }
 
-        for y in upper_left.y+1..lower_right.y-1 {
+        for y in upper_left.y + 1..lower_right.y - 1 {
             self.draw_pixel(Position::new(upper_left.x, y), color);
-            self.draw_pixel(Position::new(lower_right.x-1, y), color)
+            self.draw_pixel(Position::new(lower_right.x - 1, y), color)
         }
     }
 

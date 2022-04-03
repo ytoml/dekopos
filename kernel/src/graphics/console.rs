@@ -98,15 +98,18 @@ fn font_aligned_position(x: usize, y: usize) -> Position {
     (X_PAD + x * FW, Y_PAD + y * FH).into()
 }
 
+#[macro_export]
 macro_rules! kprint {
     ($($arg:tt)*) => {{
         use core::fmt::Write as _;
         use crate::services::CONSOLE as _CONSOLE;
+        #[allow(unused_unsafe)]
         let console = unsafe { _CONSOLE.as_mut().unwrap() };
         write!(console, $($arg)*).expect("printk failed.");
     }};
 }
 
+#[macro_export]
 macro_rules! kprintln {
     () => {{
         kprint!("\n");

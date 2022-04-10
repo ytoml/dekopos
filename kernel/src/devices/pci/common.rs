@@ -63,37 +63,115 @@ type Status = u16;
 type Command = u16;
 
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-pub struct HeaderType(pub u8);
+pub struct HeaderType(u8);
 
 impl HeaderType {
     #[inline]
     pub fn is_single_function(&self) -> bool {
         !self.0.get_bit(7)
     }
-}
 
-#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-pub struct ClassCode(pub u32);
-
-impl ClassCode {
     #[inline]
-    pub fn is_inter_pci_bridge(&self) -> bool {
-        let base = self.0.get_bits(24..32) as u8;
-        let sub = self.0.get_bits(16..24) as u8;
-        base == 0x06 && sub == 0x04
+    pub fn as_raw(&self) -> u8 {
+        self.0
     }
 }
 
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-pub struct VendorId(pub u16);
+pub struct ClassCode {
+    base_class: u8,
+    sub_class: u8,
+    interface: u8,
+    revision: u8,
+}
+
+impl ClassCode {
+    #[inline]
+    fn from_u32(code: u32) -> Self {
+        Self {
+            base_class: code.get_bits(24..32) as u8,
+            sub_class: code.get_bits(16..24) as u8,
+            interface: code.get_bits(8..16) as u8,
+            revision: code.get_bits(0..8) as u8,
+        }
+    }
+
+    #[inline]
+    pub fn base_class(&self) -> u8 {
+        self.base_class
+    }
+
+    #[inline]
+    pub fn sub_class(&self) -> u8 {
+        self.sub_class
+    }
+
+    #[inline]
+    pub fn interface(&self) -> u8 {
+        self.interface
+    }
+
+    #[inline]
+    pub fn revision(&self) -> u8 {
+        self.revision
+    }
+
+    #[inline]
+    pub fn is_inter_pci_bridge(&self) -> bool {
+        self.base_class() == 0x06 && self.sub_class() == 0x04
+    }
+
+    #[inline]
+    pub fn is_xhci(&self) -> bool {
+        self.interface() == 0x30
+    }
+
+    #[inline]
+    pub fn is_serial_controller(&self) -> bool {
+        self.base_class() == 0x0c
+    }
+
+    #[inline]
+    pub fn is_usb(&self) -> bool {
+        self.is_serial_controller() && self.sub_class() == 0x03 && self.is_xhci()
+    }
+
+    #[inline]
+    pub fn as_raw(&self) -> u32 {
+        (self.base_class() as u32) << 24
+            | (self.sub_class() as u32) << 16
+            | (self.interface() as u32) << 8
+            | self.revision() as u32
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+pub struct VendorId(u16);
 
 impl VendorId {
     #[inline]
     pub fn is_valid(&self) -> bool {
         self.0 != 0xffff
     }
+
+    #[inline]
+    pub fn is_intel(&self) -> bool {
+        self.0 == 0x8086
+    }
+
+    #[inline]
+    pub fn as_raw(&self) -> u16 {
+        self.0
+    }
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+pub enum Bar {
+    Memory32 { addr: u32, prefetchable: bool },
+    Memory64 { addr: u64, prefetchable: bool },
+}
+
+const MAX_BARS: u8 = 6;
 /// Struct that represents base parameters for PCI devices
 #[derive(Debug, Default, Clone, Copy)]
 pub struct PciConfig {
@@ -124,36 +202,78 @@ impl PciConfig {
 
     #[inline]
     pub fn class_code(&self) -> ClassCode {
-        ClassCode(self.read(0x08))
+        ClassCode::from_u32(self.read(0x08))
+    }
+
+    #[inline]
+    pub fn bar(&self, id: u8) -> Option<Bar> {
+        if id >= MAX_BARS {
+            return None;
+        }
+
+        let bar = self.read(bar_addr(id));
+        let addr = bar & !0x0f; // removing flags (4 bits from LSB)
+        let prefetchable = bar.get_bit(3);
+        match bar.get_bits(1..3) {
+            0b00 => Some(Bar::Memory32 { addr, prefetchable }),
+            0b10 => {
+                if id == MAX_BARS - 1 {
+                    // Expected to be 32 bit address (implied with location, no space for 64 bit)
+                    // but flag specifies 64 bit, thus invalid.
+                    None
+                } else {
+                    let upper = self.read(bar_addr(id + 1));
+                    let addr = (upper as u64) << 32 | addr as u64;
+                    Some(Bar::Memory64 { addr, prefetchable })
+                }
+            }
+            _ => None, // invalid
+        }
     }
 
     #[inline]
     pub fn bus_numbers(&self) -> u32 {
-        self.read(0x18)
+        self.read(bar_addr(2))
     }
 
+    #[inline]
     pub fn secondary_bus(&self) -> u8 {
         self.bus_numbers().get_bits(8..16) as u8
     }
+}
 
-    pub fn scan(&self) {}
+#[inline]
+fn bar_addr(id: u8) -> u8 {
+    0x10 + 0x04 * id
 }
 
 #[derive(Debug, Clone, Copy)]
-#[repr(C)]
 pub struct PciDevice {
     config: PciConfig,
+    class_code: ClassCode,
     header_type: HeaderType,
+    vendor_id: VendorId,
 }
 
 impl PciDevice {
     #[inline]
     pub fn from_config(config: PciConfig) -> PciDevice {
+        // This design should be refined in the future to balance the number of access to io port.
+        // So far, every callings of this constructor accesses port 3 times.
+        let class_code = config.class_code();
         let header_type = config.header_type();
+        let vendor_id = config.vendor_id();
         PciDevice {
             config,
+            class_code,
             header_type,
+            vendor_id,
         }
+    }
+
+    #[inline]
+    pub fn config(&self) -> PciConfig {
+        self.config
     }
 
     #[inline]
@@ -178,11 +298,16 @@ impl PciDevice {
 
     #[inline]
     pub fn vendor_id(&self) -> VendorId {
-        self.config.vendor_id()
+        self.vendor_id
     }
 
     #[inline]
     pub fn class_code(&self) -> ClassCode {
-        self.config.class_code()
+        self.class_code
+    }
+
+    #[inline]
+    pub fn bar(&self, id: u8) -> Option<Bar> {
+        self.config.bar(id)
     }
 }

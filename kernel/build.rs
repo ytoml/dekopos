@@ -3,6 +3,7 @@ use std::env;
 use std::io::{BufRead, Write};
 use std::num::ParseIntError;
 use std::path::Path;
+use std::process::Command;
 use std::{fs::OpenOptions, io::BufReader};
 
 use thiserror::Error;
@@ -154,6 +155,32 @@ fn load_fonts() -> Result<()> {
     Ok(())
 }
 
+const ASM_S: &str = "asm/asm.s";
+const ASM_O: &str = "asm.o";
+const LIBASM: &str = "libasm.a";
+
+fn build_asm() -> Result<()> {
+    let out_dir = env::var("OUT_DIR")?;
+    let out_path = Path::new(&out_dir).join(ASM_O).display().to_string();
+
+    let status = Command::new("nasm")
+        .args(&["-f", "elf64", "-o", &out_path, ASM_S])
+        .status()?;
+    assert!(status.success());
+
+    let status = Command::new("ar")
+        .args(&["crus", LIBASM, ASM_O])
+        .current_dir(&out_dir)
+        .status()?;
+    assert!(status.success());
+
+    println!("cargo:rustc-link-search={}", out_dir);
+    println!("cargo:rustc-link-lib=static=asm");
+    println!("cargo:rerun-if-changed={}", ASM_S);
+    Ok(())
+}
+
 fn main() -> Result<()> {
-    load_fonts()
+    load_fonts()?;
+    build_asm()
 }

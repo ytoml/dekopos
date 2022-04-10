@@ -5,7 +5,6 @@ const CAPACITY: usize = 32;
 const DEVICE_MAX: u8 = 32;
 const FUNC_MAX: u8 = 8;
 
-#[repr(C)]
 pub struct PciDeviceService {
     devices: [Option<PciDevice>; CAPACITY],
     count: usize,
@@ -93,5 +92,12 @@ impl PciDeviceService {
 
     pub fn iter(&self) -> core::slice::Iter<Option<PciDevice>> {
         self.devices[0..self.count].iter()
+    }
+
+    pub fn reset(&mut self) {
+        for device in self.devices[0..self.count].iter_mut() {
+            let _ = device.take();
+        }
+        self.count = 0;
     }
 }

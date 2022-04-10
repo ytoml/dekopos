@@ -12,6 +12,7 @@ use log::info;
 use uefi::prelude::*;
 
 use common_data::graphics::FrameBuffer;
+use common_data::mmap::MemMap;
 
 mod boot;
 mod fs;
@@ -53,15 +54,15 @@ fn efi_main(image: Handle, mut systab: SystemTable<Boot>) -> Status {
 
     info!("entry point: {:?}", entry_addr);
     let entry = unsafe {
-        type EntryPoint = extern "sysv64" fn(*mut FrameBuffer);
+        type EntryPoint = extern "sysv64" fn(*const MemMap, *mut FrameBuffer);
         mem::transmute::<*const u8, EntryPoint>(entry_addr)
     };
 
     info!("exit boot service...");
-    let _ = boot::exit_boot_services(image, systab).expect("failed to exit boot service.");
+    let (_, mmap) = boot::exit_boot_services(image, systab).expect("failed to exit boot service.");
 
     info!("calling kernel entry...");
-    entry(&mut fb as *mut FrameBuffer);
+    entry(&mmap as *const MemMap, &mut fb as *mut FrameBuffer);
 
     #[allow(clippy::empty_loop)]
     loop {}

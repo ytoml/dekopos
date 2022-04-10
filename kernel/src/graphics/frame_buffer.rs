@@ -3,9 +3,7 @@ use common_data::graphics::PixelFormat;
 use super::font;
 use super::{Bgr, Color, Draw, Offset, Paint, Position, Rgb};
 
-/// Assume that identical memory representation to [`common_data::graphic::FrameBuffer`]
 #[derive(Debug)]
-#[repr(C)]
 pub struct FrameBuffer(::common_data::graphics::FrameBuffer);
 
 impl FrameBuffer {

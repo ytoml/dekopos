@@ -4,6 +4,7 @@ pub mod font;
 pub mod frame_buffer;
 mod paint;
 
+pub use console::*;
 pub use frame_buffer::*;
 pub use paint::*;
 

@@ -1,3 +1,4 @@
+#![feature(default_alloc_error_handler)]
 #![cfg_attr(not(test), no_std)]
 #![no_main]
 
@@ -17,8 +18,11 @@ use graphics::Color;
 use crate::graphics::{Draw, Position};
 
 #[no_mangle]
-pub extern "sysv64" fn kernel_main(fb: *mut ::common_data::graphics::FrameBuffer) {
-    services::init(fb);
+pub extern "sysv64" fn kernel_main(
+    mmap: *const ::common_data::mmap::MemMap,
+    fb: *mut ::common_data::graphics::FrameBuffer,
+) {
+    unsafe { services::init(mmap, fb) };
     kprintln!("{}", HELLO_KERNEL);
     kprintln!(
         r"
@@ -38,11 +42,10 @@ ______                     _____ _____
     scan_devices();
     kprintln!("Devices successfully scanned!");
 
-    loop {
-        unsafe {
-            asm!("hlt");
-        }
-    }
+    detect_usb();
+    inspect_memmap();
+
+    hlt!();
 }
 
 const HELLO_KERNEL: &str = "Hello, Kernel! This is OS kernel crafted with Rust. Have fun and I wish you learn much during implementing this. Good luck!";
@@ -65,44 +68,86 @@ fn draw_something() {
 
 fn scan_devices() {
     use services::PCI_DEVICES;
-    let pci_device = unsafe { PCI_DEVICES.as_mut().unwrap() };
-    if let Err(e) = pci_device.scan_all_bus() {
+    let pci_devices = unsafe { &mut PCI_DEVICES };
+    if let Err(e) = pci_devices.scan_all_bus() {
         kprintln!("[WARN]: {:?}", e);
     }
 
     kprintln!();
     kprintln!("Detected devices:");
-    for (i, device) in pci_device.iter().flatten().enumerate() {
+    for (i, device) in pci_devices.iter().flatten().enumerate() {
         kprintln!(
-            "[{}] {:02}.{:02}.{:02}: vendor={:#06x}, class={:#10x}, header={:#04x}",
+            "[{}] {:02}.{:02}.{:02}: vendor={:#06x}, class={:#010x}, header={:#04x}",
             i,
             device.bus(),
             device.device_number(),
             device.function(),
-            device.vendor_id().0,
-            device.class_code().0,
-            device.header_type().0,
+            device.vendor_id().as_raw(),
+            device.class_code().as_raw(),
+            device.header_type().as_raw(),
         )
+    }
+    pci_devices.reset();
+}
+
+fn detect_usb() {
+    use services::PCI_DEVICES;
+    let pci_devices = unsafe { &mut PCI_DEVICES };
+    if let Err(e) = pci_devices.scan_all_bus() {
+        kprintln!("[WARN]: {:?}", e);
+    }
+
+    let mut usb = None;
+    for device in pci_devices.iter().flatten() {
+        if device.class_code().is_usb() {
+            kprintln!("USB detected!: {:?}", device);
+            kprintln!("MMIO: {:?}", device.bar(0));
+            usb.insert(*device);
+            if device.vendor_id().is_intel() {
+                break;
+            }
+        }
+    }
+
+    if usb.is_none() {
+        kprintln!("USB unavailable...");
+    }
+
+    pci_devices.reset();
+}
+
+fn inspect_memmap() {
+    use services::MMAP;
+    let mmap = unsafe { MMAP.as_ref().unwrap() };
+    kprintln!("{:?}", mmap);
+    kprintln!("index, type, phys_start...phys_end,   offset,  att");
+    for (i, desc) in mmap.as_slice().iter().enumerate() {
+        kprintln!(
+            "{:02},    {:#03x}, {:#010x}..{:#010x}, {:#08x}, {:#08x}",
+            i,
+            desc.ty,
+            desc.phys_start,
+            desc.phys_end,
+            desc.offset,
+            desc.attribute
+        );
     }
 }
 
-static mut FIRST_PANIC: bool = true;
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    unsafe {
-        if FIRST_PANIC {
-            // try to report panic information
-            // If recursive panic occurs (i.e. panic due to CONSOLE), it will be quiet.
-            FIRST_PANIC = false;
-            if let Some(info) = info.payload().downcast_ref::<&str>() {
-                kprintln!("{}", info);
-            } else {
-                kprintln!("panic occurred");
+    kprintln!("{}", info);
+    hlt!();
+}
+
+#[macro_export]
+macro_rules! hlt {
+    () => {{
+        #[allow(unused_unsafe)]
+        unsafe {
+            loop {
+                asm!("hlt");
             }
         }
-
-        loop {
-            asm!("hlt");
-        }
-    }
+    }};
 }

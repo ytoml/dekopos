@@ -1,25 +1,27 @@
-use core::arch::global_asm;
+use core::arch::asm;
 
-global_asm!(
-    ".global io_write32",
-    "io_write32:",
-    "mov dx, di",
-    "mov eax, esi",
-    "out dx, eax",
-    "ret",
-);
+unsafe fn io_write32(addr: u16, value: u32) {
+    asm!(
+        "mov dx, {addr:x}",
+        "mov eax, {val:e}",
+        "out dx, eax", // can only use "dx, eax" as operands
+        addr = in(reg_abcd) addr,
+        val = in(reg) value,
+        options(nomem, nostack),
+    );
+}
 
-global_asm!(
-    ".global io_read32",
-    "io_read32:",
-    "mov dx, di",
-    "in eax, dx",
-    "ret",
-);
-
-extern "sysv64" {
-    fn io_write32(addr: u16, value: u32);
-    fn io_read32(addr: u16) -> u32;
+unsafe fn io_read32(addr: u16) -> u32 {
+    let ret: u32;
+    asm!(
+        "mov dx, {addr:x}",
+        "in eax, dx",
+        "mov {ret:e}, eax",
+        addr = in(reg_abcd) addr,
+        ret = out(reg) ret,
+        options(nomem, nostack),
+    );
+    ret
 }
 
 /// This implementation assumes x86_64.

@@ -1,4 +1,5 @@
 use super::logging;
+use crate::devices;
 use crate::devices::pci::PciDeviceService;
 use crate::graphics::console::Console;
 use crate::graphics::FrameBuffer;
@@ -7,10 +8,10 @@ use crate::graphics::FrameBuffer;
 // does not contains the content of frame buffer and we can assume that
 // the exact location of frame buffer does not change from its original
 // even if we move the location of FrameBuffer.
-pub(crate) static mut FRAME_BUFFER: Option<FrameBuffer> = None;
-pub(crate) static mut CONSOLE: Option<Console> = None;
-pub(crate) static mut PCI_DEVICES: PciDeviceService = PciDeviceService::new();
-pub(crate) static mut MMAP: Option<::common_data::mmap::MemMap> = None;
+static mut FRAME_BUFFER: Option<FrameBuffer> = None;
+pub(super) static mut CONSOLE: Option<Console> = None;
+static mut PCI_DEVICES: PciDeviceService = PciDeviceService::new();
+static mut MMAP: Option<::common_data::mmap::MemMap> = None;
 
 /// # Safety
 /// This function is expected to be called at the very start of the entry of the kernel.
@@ -26,4 +27,11 @@ pub unsafe fn init(
 
     // memory map
     let _ = MMAP.insert(mmap.read());
+
+    // interrupt handler
+    devices::setup_handler();
 }
+
+access_static_as_mut_unwrap!(pub console_mut, CONSOLE, Console<'static>);
+access_static_as_ref_unwrap!(pub mmap, MMAP, ::common_data::mmap::MemMap);
+access_static_mut!(pub pci_devices_service_mut, PCI_DEVICES, PciDeviceService);

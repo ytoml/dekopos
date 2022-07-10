@@ -101,10 +101,10 @@ fn font_aligned_position(x: usize, y: usize) -> Position {
 #[macro_export]
 macro_rules! kprint {
     ($($arg:tt)*) => {{
+        #[allow(unused_imports)]
         use core::fmt::Write as _;
-        use crate::services::CONSOLE as _CONSOLE;
         #[allow(unused_unsafe)]
-        let console = unsafe { _CONSOLE.as_mut().unwrap() };
+        let console = unsafe { $crate::services::console_mut() };
         write!(console, $($arg)*).expect("printk failed.");
     }};
 }
@@ -112,14 +112,14 @@ macro_rules! kprint {
 #[macro_export]
 macro_rules! kprintln {
     () => {{
-        kprint!("\n");
+        $crate::kprint!("\n");
     }};
 
     ($fmt:expr) => {{
-        kprint!(concat!($fmt, "\n"));
+        $crate::kprint!(concat!($fmt, "\n"));
     }};
 
     ($fmt:expr, $($arg:tt)*) => {{
-        kprint!(concat!($fmt, "\n"), $($arg)*);
+        $crate::kprint!(concat!($fmt, "\n"), $($arg)*);
     }};
 }

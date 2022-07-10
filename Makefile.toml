@@ -1,0 +1,35 @@
+[env]
+CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
+KERNEL_BIN = "./target/x86_64-unknown-elf/release/kernel.elf"
+LOADER_BIN = "./target/x86_64-unknown-uefi/release/loader.efi"
+
+[tasks.build-kernel]
+script = '''
+cd kernel
+cargo build --release
+'''
+
+[tasks.build-loader]
+script = '''
+cd loader
+cargo build --release
+'''
+
+[tasks.build]
+env = { CARGO_MAKE_WORKSPACE_SKIP_MEMBERS = "common-data;hello/day01;hello/literal-expander" }
+
+[tasks.run-loader]
+dependencies = ["build-loader"]
+# requires "./assets/loader-run.sh" in your repo.
+script = '''
+#!/bin/zsh
+./assets/loader-run.sh ${LOADER_BIN}
+'''
+
+[tasks.run-kernel]
+dependencies = ["build"]
+# requires "./assets/kernel-run.sh" in your repo.
+script = '''
+#!/bin/zsh
+./assets/kernel-run.sh ${LOADER_BIN} ${KERNEL_BIN}
+'''

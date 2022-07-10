@@ -1,9 +1,10 @@
 #![allow(dead_code)]
 use bit_field::BitField;
 
+use super::msi::MsiCapabilities;
 use crate::devices::io::{IoAccess, IoPort};
 
-/// PCI configuration adress
+/// PCI configuration address
 ///
 /// ```ignore
 ///  +--------+---------------+-----------------------------------------------------------------+
@@ -127,12 +128,17 @@ impl ClassCode {
     }
 
     #[inline]
+    pub fn is_ehci(&self) -> bool {
+        self.interface() == 0x20
+    }
+
+    #[inline]
     pub fn is_serial_controller(&self) -> bool {
         self.base_class() == 0x0c
     }
 
     #[inline]
-    pub fn is_usb(&self) -> bool {
+    pub fn is_usb_xhci(&self) -> bool {
         self.is_serial_controller() && self.sub_class() == 0x03 && self.is_xhci()
     }
 
@@ -186,8 +192,18 @@ impl PciConfig {
     }
 
     #[inline]
-    fn read(&self, reg_addr: u8) -> u32 {
+    pub(super) fn read(&self, reg_addr: u8) -> u32 {
         unsafe { read_pci_config(PciAddr::new(self.bus, self.device, self.func, reg_addr)) }
+    }
+
+    #[inline]
+    pub(super) fn write(&self, reg_addr: u8, value: u32) {
+        unsafe {
+            write_pci_config(
+                PciAddr::new(self.bus, self.device, self.func, reg_addr),
+                value,
+            )
+        }
     }
 
     #[inline]
@@ -206,28 +222,35 @@ impl PciConfig {
     }
 
     #[inline]
-    pub fn bar(&self, id: u8) -> Option<Bar> {
+    pub fn msi_capabilities(&self) -> MsiCapabilities {
+        let pointer = self.read(0x34).get_bits(0..8) as u8;
+        MsiCapabilities::new(*self, pointer)
+    }
+
+    #[inline]
+    /// # Panics
+    /// This method panics if [`id`] >= 6 provided.
+    pub fn bar(&self, id: u8) -> Bar {
         if id >= MAX_BARS {
-            return None;
+            panic!("Id for bar must be <= 5.");
         }
 
         let bar = self.read(bar_addr(id));
         let addr = bar & !0x0f; // removing flags (4 bits from LSB)
         let prefetchable = bar.get_bit(3);
         match bar.get_bits(1..3) {
-            0b00 => Some(Bar::Memory32 { addr, prefetchable }),
+            0b00 => Bar::Memory32 { addr, prefetchable },
             0b10 => {
                 if id == MAX_BARS - 1 {
                     // Expected to be 32 bit address (implied with location, no space for 64 bit)
-                    // but flag specifies 64 bit, thus invalid.
-                    None
+                    panic!("Expected to be 32 bit address but flag specifies 64 bit. Some fault might occur in PCI configuration space.");
                 } else {
                     let upper = self.read(bar_addr(id + 1));
                     let addr = (upper as u64) << 32 | addr as u64;
-                    Some(Bar::Memory64 { addr, prefetchable })
+                    Bar::Memory64 { addr, prefetchable }
                 }
             }
-            _ => None, // invalid
+            _ => panic!("Invalid bar specification found. Some fault might occur in PCI configuration space."),
         }
     }
 
@@ -307,7 +330,9 @@ impl PciDevice {
     }
 
     #[inline]
-    pub fn bar(&self, id: u8) -> Option<Bar> {
+    /// # Panics
+    /// This method panics if [`id`] >= 6 provided.
+    pub fn bar(&self, id: u8) -> Bar {
         self.config.bar(id)
     }
 }

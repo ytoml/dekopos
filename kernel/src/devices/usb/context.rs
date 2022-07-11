@@ -19,12 +19,10 @@ pub struct DeviceContextBaseAddressArray {
 
 impl DeviceContextBaseAddressArray {
     pub fn new(capacity: usize, boundary: u64) -> Self {
-        let mut inner = Vec::with_capacity_in(capacity, XhcRuntimeAllocator::new(boundary));
         // Rust's null is defined as 0x0 and this fits xHCI specification
-        for _ in 0..capacity {
-            inner.push(ptr::null_mut());
+        Self {
+            inner: vec_no_realloc![ptr::null_mut::<Device32Byte>(); capacity; XhcRuntimeAllocator::new(boundary)],
         }
-        Self { inner }
     }
 
     /// Register context that allocated with 64 bytes alignment in the heap.

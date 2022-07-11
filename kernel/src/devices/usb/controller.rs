@@ -3,14 +3,16 @@ use bit_field::BitField;
 // use xhci::extended_capabilities::xhci_extended_message_interrupt::XhciExtendedMessageInterrupt;
 use xhci::extended_capabilities::List;
 // use xhci::registers::operational::UsbCommandRegister;
+use xhci::ring::trb::event::{CommandCompletion, PortStatusChange, TransferEvent};
 use xhci::Registers;
 
 use crate::devices::interrupts;
 use crate::devices::pci::PciConfig;
+use crate::utils::{VolatileCell, VolatileReadAt, VolatileWriteAt};
 
 use super::context::{self, DeviceContextBaseAddressArray};
 use super::error::{Error, Result};
-use super::mem::{Vec, XhcMapper};
+use super::mem::{Vec, XhcMapper, XHC_ALLOC};
 use super::ring::{CommandRing, EventRing, EventRingSegmentTable, TransferRing, TrbC, TrbE};
 
 const CR_SIZE: usize = 32;
@@ -21,12 +23,13 @@ const TR_SIZE: usize = 32;
 const N_INTR: usize = 1;
 const N_PORTS: usize = 256;
 
-// Root hub port must be sticked to only one port from resetting until address is allocated.
-#[derive(Debug, Clone, Copy)]
-enum PortConfigPhase {
+/// Enum that represents current configuration phase of port.
+/// This enum is need because root hub port must be sticked to only one port from resetting until address is allocated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
     NotConnected,
     WaitingAddressed,
-    ResettingPort,
+    Resetting,
     EnablingSlot,
     AddressingDevice,
     ConfiguringEndpoints,
@@ -43,7 +46,12 @@ pub struct HostController {
     tr: TransferRing, // TODO: Per device Transfer Ring must be managed.
     n_intr: usize,
     capabilities: List<XhcMapper>,
-    port_phases: [PortConfigPhase; N_PORTS],
+
+    // Port status must be atomically configured.
+    // NOTE: when addressing_port == 0, there are no ports on configuration.
+    port_phases: Vec<VolatileCell<Phase>>,
+    max_ports: usize,
+    addressing_port: VolatileCell<usize>,
 }
 
 impl HostController {
@@ -57,6 +65,14 @@ impl HostController {
         let er = EventRing::new(ER_SIZE);
         let regs = unsafe { Registers::new(mmio_base, XhcMapper) };
         let hccparams1 = regs.capability.hccparams1.read_volatile();
+        let max_ports = regs
+            .capability
+            .hcsparams1
+            .read_volatile()
+            .number_of_ports()
+            .into();
+        let port_phases =
+            vec_no_realloc![VolatileCell::new(Phase::NotConnected); max_ports; XHC_ALLOC];
         Self {
             mmio_base,
             regs,
@@ -67,7 +83,9 @@ impl HostController {
             n_intr: N_INTR,
             capabilities: unsafe { List::new(mmio_base, hccparams1, XhcMapper) }
                 .expect("extended capabilities not available."),
-            port_phases: [PortConfigPhase::NotConnected; N_PORTS],
+            port_phases,
+            max_ports,
+            addressing_port: VolatileCell::new(0),
         }
     }
 }
@@ -268,29 +286,58 @@ impl HostController {
             });
     }
 
-    pub fn init_port(&mut self, port_index: usize) {
+    pub fn port_connected(&self, port_id: usize) -> bool {
+        self.regs
+            .port_register_set
+            .read_volatile_at(port_id)
+            .portsc
+            .current_connect_status()
+    }
+
+    pub fn reset_port(&mut self, port_id: usize) -> Result<()> {
+        if !self.port_connected(port_id) {
+            return Ok(());
+        }
+
+        if self.addressing_port.read_volatile() == 0 {
+            Ok(())
+        } else {
+            match self.port_phases.read_volatile_at(port_id) {
+                Phase::NotConnected | Phase::WaitingAddressed => {
+                    self.addressing_port.write_volatile(port_id);
+                    self.port_phases
+                        .write_volatile_at(port_id, Phase::Resetting);
+                    self.init_port(port_id);
+                    Ok(())
+                }
+                _ => Err(Error::InvalidPortPhase),
+            }
+        }
+    }
+
+    pub fn init_port(&mut self, port_id: usize) {
         // If USB3, this reset procedure is redundant.
         // However, it's simpler to always reset (and is valid for both types of USB).
         let mut must_wait = false;
         let port_regs = &mut self.regs.port_register_set;
-        port_regs.update_volatile_at(port_index, |r| {
+        port_regs.update_volatile_at(port_id, |r| {
             if r.portsc.current_connect_status() && r.portsc.connect_status_change() {
                 must_wait = true;
-                r.portsc.set_port_reset();
-                r.portsc.clear_connect_status_change();
+                r.portsc.set_port_reset().clear_connect_status_change();
             }
         });
         if must_wait {
-            while !port_regs.read_volatile_at(port_index).portsc.port_reset() {}
+            while !port_regs.read_volatile_at(port_id).portsc.port_reset() {}
         }
     }
 
-    pub fn enable_slot(&mut self, port_index: usize) {
+    pub fn enable_slot(&mut self, port_id: usize) {
         let port_regs = &mut self.regs.port_register_set;
-        port_regs.update_volatile_at(port_index, |r| {
+        port_regs.update_volatile_at(port_id, |r| {
             if r.portsc.port_enabled_disabled() && r.portsc.port_reset_change() {
                 r.portsc.clear_port_reset_change();
-                self.port_phases[port_index] = PortConfigPhase::EnablingSlot;
+                self.port_phases
+                    .write_volatile_at(port_id, Phase::EnablingSlot);
                 use xhci::ring::trb::command::EnableSlot;
                 let enabling_trb = TrbC::EnableSlot(EnableSlot::new());
                 self.cr.push(enabling_trb);
@@ -305,7 +352,7 @@ impl HostController {
         })
     }
 
-    pub fn allocate_addr_to_device(&mut self, port_index: usize) {
+    pub fn allocate_addr_to_device(&mut self, port_id: usize) {
         todo!();
         use xhci::context::{
             /*DeviceHandler,*/ Input32Byte,  /* InputControl, InputControlHandler, */
@@ -315,7 +362,7 @@ impl HostController {
         input.control_mut().set_add_context_flag(0); // enable slot context
         input.control_mut().set_add_context_flag(1); // enable 1st endpoint context
         let port_regs = &mut self.regs.port_register_set;
-        port_regs.update_volatile_at(port_index, |r| {
+        port_regs.update_volatile_at(port_id, |r| {
             r.portsc.port_speed();
         });
     }
@@ -331,15 +378,75 @@ impl HostController {
 
     fn on_event(&mut self, trb: TrbE) -> Result<()> {
         match trb {
-            TrbE::CommandCompletion(event) => {}
-            TrbE::PortStatusChange(change) => {}
-            TrbE::TransferEvent(event) => {}
-            _ => {
+            TrbE::CommandCompletion(cc) => self.command_completion(cc)?,
+            TrbE::PortStatusChange(sc) => self.port_status_change(sc)?,
+            TrbE::TransferEvent(te) => self.transfer_event(te)?,
+            trb => {
                 // TODO: Add handler on other events.
+                log::debug!("Hostcontroller::on_event : {trb:?}");
             }
         }
-
         Ok(())
+    }
+}
+
+impl HostController {
+    fn command_completion(&mut self, cc: CommandCompletion) -> Result<()> {
+        match cc.completion_code() {
+            // TODO: Appropriate handling of trb completion codes
+            Ok(_code) => {}
+            Err(code) => return Err(Error::UnexpectedCompletionCode(code)),
+        }
+
+        let command_src = cc.command_trb_pointer() as *const TrbC;
+        match unsafe { command_src.read() } {
+            TrbC::EnableSlot(_) => {
+                let port_id = self.addressing_port.read_volatile();
+                if self.port_phases.read_volatile_at(port_id) != Phase::EnablingSlot {
+                    Err(Error::InvalidPortPhase)
+                } else {
+                    self.address_device()
+                }
+            }
+            TrbC::AddressDevice(_) => {
+                // TODO:
+                self.initialize_device()
+            }
+            TrbC::ConfigureEndpoint(_) => {
+                // TODO:
+                self.complete_configuration()
+            }
+            _ => Err(Error::InvalidPortPhase),
+        }
+    }
+
+    fn address_device(&mut self) -> Result<()> {
+        todo!()
+    }
+
+    fn initialize_device(&mut self) -> Result<()> {
+        todo!()
+    }
+
+    fn complete_configuration(&mut self) -> Result<()> {
+        todo!()
+    }
+
+    fn port_status_change(&mut self, sc: PortStatusChange) -> Result<()> {
+        let port_id = sc.port_id().into();
+        match self.port_phases.read_volatile_at(port_id) {
+            Phase::NotConnected => self.reset_port(port_id),
+            Phase::Resetting => {
+                self.enable_slot(port_id);
+                Ok(())
+            }
+            _ => Err(Error::InvalidPortPhase),
+        }
+    }
+
+    fn transfer_event(&mut self, te: TransferEvent) -> Result<()> {
+        // let port_id = self.slot_to_device(te.slot_id());
+        todo!();
     }
 }
 

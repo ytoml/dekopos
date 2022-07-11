@@ -10,7 +10,7 @@ pub(super) fn logger_init(mut console: Console<'static>) {
     console.fill_screen();
     let _ = unsafe { CONSOLE.insert(console) };
     log::set_logger(&KernelLogger).unwrap();
-    log::set_max_level(log::LevelFilter::Info);
+    log::set_max_level(log::LevelFilter::Debug);
 }
 
 struct KernelLogger;

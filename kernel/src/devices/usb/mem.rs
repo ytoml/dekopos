@@ -7,11 +7,13 @@ use core::ptr::NonNull;
 use spin::Mutex;
 use xhci::accessor::Mapper;
 
-use crate::util::{Aligned64, PageAligned};
+use crate::utils::{Aligned64, PageAligned};
 use crate::x64;
 
 pub(super) type Vec<T> = alloc::vec::Vec<T, XhcAllocator>;
 pub use alloc::vec;
+
+pub const XHC_ALLOC: XhcAllocator = XhcAllocator;
 
 // Note that this mapper is just for memory-mapped IO
 // and is different from virtual address mapper for page table.
@@ -57,6 +59,7 @@ impl<const ALIGN: usize> XhcRuntimeAllocator<ALIGN> {
 
 unsafe impl<const ALIGN: usize> Allocator for XhcRuntimeAllocator<ALIGN> {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        log::debug!("boundary = {}", self.boundary);
         unsafe { heap_mut() }
             .alloc_with_boundary(layout, self.boundary)
             .ok_or(AllocError)
@@ -85,7 +88,7 @@ impl<const LIMIT: usize> OneShotHeap<LIMIT> {
         let _guard = self.mu.lock();
         let align = layout.align() as u64;
         let size = layout.size();
-        log::info!("cur = {}, size = {}, align = {}", self.cur, size, align);
+        log::debug!("cur = {}, size = {}, align = {}", self.cur, size, align);
         if self.cur >= LIMIT {
             return None;
         }
@@ -102,9 +105,9 @@ impl<const LIMIT: usize> OneShotHeap<LIMIT> {
         let align = layout.align() as u64;
         let size = layout.size() as u64;
         assert!(
-            align > boundary,
-            "Invalid pair of alignment and boundary, alignment was {} while boundary = {}",
-            align,
+            size <= boundary,
+            "Allocating data size cannot be larger than boundary, but data size is {} and boundary is {}.",
+            size,
             boundary
         );
         let ptr = self.cursor_ptr_aligned_up(align);

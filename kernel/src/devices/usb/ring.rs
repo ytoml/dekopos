@@ -1,8 +1,6 @@
 extern crate alloc;
 use core::marker::PhantomData;
 
-use alloc::vec::Vec;
-
 pub use xhci::ring::trb::command::Allowed as TrbC;
 pub use xhci::ring::trb::event::Allowed as TrbE;
 pub use xhci::ring::trb::transfer::Allowed as TrbT;
@@ -15,6 +13,7 @@ pub type TransferRing = Producer<TrbT>;
 pub type CommandRing = Producer<TrbC>;
 
 type RingAlloc = XhcAlignedAllocator<64>;
+type Vec<T> = alloc::vec::Vec<T, RingAlloc>;
 const ALLOC: RingAlloc = XhcAlignedAllocator::<64>;
 
 pub trait SoftwareProduceTrb: Sized {
@@ -52,23 +51,13 @@ impl SoftwareProduceTrb for TrbT {
 /// (Event ring can be dynamically sized, but it will be managed through [`EventRingSegmentTable`] and [`Ring`] will be inctanciated per segment.)
 #[derive(Debug)]
 struct Ring<Trb> {
-    // Trb instead of
-    buf: Vec<[u32; 4], RingAlloc>,
+    buf: Vec<[u32; 4]>,
     _phantom: PhantomData<Trb>,
 }
 impl<Trb> Ring<Trb> {
     fn new(capacity: usize) -> Self {
-        let mut buf = Vec::with_capacity_in(capacity, ALLOC);
-        for uninit in buf.spare_capacity_mut().iter_mut() {
-            unsafe {
-                uninit.write(core::mem::zeroed());
-            }
-        }
-        unsafe {
-            buf.set_len(capacity);
-        }
         Self {
-            buf,
+            buf: vec_no_realloc![[0; 4]; capacity; ALLOC],
             _phantom: PhantomData::<Trb>,
         }
     }
@@ -261,7 +250,7 @@ impl EventRingSegmentTableEntry {
 #[derive(Debug)]
 pub struct EventRingSegmentTable {
     // Note: inner.push() can incur reallocation and it will bring difficult bugs.
-    inner: Vec<EventRingSegmentTableEntry, RingAlloc>,
+    inner: Vec<EventRingSegmentTableEntry>,
 }
 impl EventRingSegmentTable {
     pub fn new(er_segments: &[&EventRing]) -> Self {

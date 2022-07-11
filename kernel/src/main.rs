@@ -11,7 +11,7 @@ extern crate derive_more;
 use core::panic::PanicInfo;
 
 #[macro_use]
-mod util;
+mod utils;
 
 mod data_types;
 mod devices;
@@ -24,7 +24,7 @@ mod x64;
 use crate::devices::pci::PciDevice;
 use crate::graphics::{Color, Draw, Position};
 
-pub use crate::util::PageAligned;
+pub use crate::utils::PageAligned;
 
 #[no_mangle]
 pub extern "sysv64" fn kernel_main(

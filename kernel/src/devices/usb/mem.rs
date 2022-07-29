@@ -11,6 +11,7 @@ use crate::utils::{Aligned64, PageAligned};
 use crate::x64;
 
 pub(super) type Vec<T> = alloc::vec::Vec<T, XhcAllocator>;
+pub(super) type Box<T> = alloc::boxed::Box<T, XhcAllocator>;
 pub use alloc::vec;
 
 pub const XHC_ALLOC: XhcAllocator = XhcAllocator;
@@ -27,6 +28,7 @@ impl Mapper for XhcMapper {
     fn unmap(&mut self, _virt_start: usize, _bytes: usize) {}
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct XhcAllocator;
 unsafe impl Allocator for XhcAllocator {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
@@ -37,6 +39,7 @@ unsafe impl Allocator for XhcAllocator {
 }
 
 /// Allocator with static alignment.
+#[derive(Debug, Clone, Copy)]
 pub struct XhcAlignedAllocator<const ALIGN: usize>;
 unsafe impl<const ALIGN: usize> Allocator for XhcAlignedAllocator<ALIGN> {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
@@ -47,7 +50,7 @@ unsafe impl<const ALIGN: usize> Allocator for XhcAlignedAllocator<ALIGN> {
 }
 
 /// Allocator with dynamic page boundary (indicate to handle Page Size Register, etc.)
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct XhcRuntimeAllocator<const ALIGN: usize> {
     boundary: u64,
 }
@@ -59,9 +62,8 @@ impl<const ALIGN: usize> XhcRuntimeAllocator<ALIGN> {
 
 unsafe impl<const ALIGN: usize> Allocator for XhcRuntimeAllocator<ALIGN> {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        log::debug!("boundary = {}", self.boundary);
         unsafe { heap_mut() }
-            .alloc_with_boundary(layout, self.boundary)
+            .alloc_with_boundary(layout.align_to(ALIGN).unwrap(), self.boundary)
             .ok_or(AllocError)
     }
 
@@ -94,9 +96,10 @@ impl<const LIMIT: usize> OneShotHeap<LIMIT> {
         }
         let head = (self.cursor_ptr_aligned_up(align) - self.base_ptr_u64()) as usize;
         let newcur = head + size;
+        // It's OK to be newcur == LIMIT (allocation is for ..=LIMIT-1 this time)
         if newcur > LIMIT {
             return None;
-        } // It's OK to be newcur == LIMIT (allocation is for ..LIMIT-1 this time)
+        }
         self.cur = newcur;
         NonNull::new(&mut self.pool[head..newcur] as *mut [u8])
     }
@@ -104,6 +107,13 @@ impl<const LIMIT: usize> OneShotHeap<LIMIT> {
     fn alloc_with_boundary(&mut self, mut layout: Layout, boundary: u64) -> Option<NonNull<[u8]>> {
         let align = layout.align() as u64;
         let size = layout.size() as u64;
+        log::debug!(
+            "alloc_with_boundary: cur = {}, size = {}, align = {}, boundary: {}",
+            self.cur,
+            size,
+            align,
+            boundary
+        );
         assert!(
             size <= boundary,
             "Allocating data size cannot be larger than boundary, but data size is {} and boundary is {}.",

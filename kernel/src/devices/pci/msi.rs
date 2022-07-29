@@ -229,12 +229,12 @@ impl MessageAddress {
     rw_bit!(
         2,
         destination_mode,
-        "Destination mode. For detail, see 10.11.1 of Inted SDM."
+        "Destination mode. For detail, see 10.11.1 of Intel SDM."
     );
     rw_bit!(
         3,
         redirection_hint,
-        "Redirection hint. For detail, see 10.11.1 of Inted SDM."
+        "Redirection hint. For detail, see 10.11.1 of Intel SDM."
     );
     rw_bits!(12..=19, destination_id, u8, "Destination id of processor.");
 }

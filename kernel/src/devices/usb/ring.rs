@@ -1,5 +1,6 @@
 extern crate alloc;
 use core::marker::PhantomData;
+use core::mem;
 
 pub use xhci::ring::trb::command::Allowed as TrbC;
 pub use xhci::ring::trb::event::Allowed as TrbE;
@@ -21,10 +22,24 @@ pub trait SoftwareProduceTrb: Sized {
     fn into_raw(self) -> [u32; 4];
 }
 pub trait SoftwareConsumeTrb {}
+
 fn link_trb_with_toggle() -> Link {
     let mut link = Link::new();
     link.set_toggle_cycle();
     link
+}
+
+/// Read trb from specified address
+/// # Safety
+/// `pointer` must be valid pointer.
+// XXX: TOTALLY invalid cast
+// 1. enum and its content is not same in terms of its memory layout (they have different size)
+// 2. trb_pointer() functions return "physical" address (currently, it's identity mapping thus ok).
+pub(super) unsafe fn read_trb<Trb>(pointer: u64) -> core::result::Result<Trb, [u32; 4]>
+where
+    Trb: TryFrom<[u32; 4], Error = [u32; 4]>,
+{
+    (pointer as *const [u32; 4]).read().try_into()
 }
 
 impl SoftwareProduceTrb for TrbC {
@@ -49,6 +64,8 @@ impl SoftwareProduceTrb for TrbT {
 /// Main purpose is to prevent `push` on [`Vec`] which might incur difficult bug
 /// through reallocation (i.e. location changes without notifying ring related registers).
 /// (Event ring can be dynamically sized, but it will be managed through [`EventRingSegmentTable`] and [`Ring`] will be inctanciated per segment.)
+/// [`[u32; 4]`] is used instead of [`Allowed`] from [`xhci`] crate, because [`Allowed`] is enum and
+/// it has metadata to distinguish variant, thus different size as TRB.
 #[derive(Debug)]
 struct Ring<Trb> {
     buf: Vec<[u32; 4]>,
@@ -71,12 +88,16 @@ impl<Trb> Ring<Trb> {
         self.as_ptr() as u64
     }
 
-    fn size(&self) -> usize {
+    fn len(&self) -> usize {
         self.buf.len()
     }
 
     fn last_index(&self) -> usize {
-        self.size() - 1
+        self.len() - 1
+    }
+
+    const fn elem_size(&self) -> usize {
+        mem::size_of::<Trb>()
     }
 }
 
@@ -136,6 +157,7 @@ pub struct Consumer<Trb: SoftwareConsumeTrb> {
     ring: Ring<Trb>,
     cycle_bit: bool,
 }
+
 impl Consumer<TrbE> {
     pub fn new(capacity: usize) -> Self {
         Self {
@@ -152,6 +174,11 @@ impl Consumer<TrbE> {
         self.cycle_bit = !self.cycle_bit;
     }
 
+    pub fn is_unprocessed(&self, pointer: u64) -> bool {
+        let index = self.index_of(pointer);
+        self.get(index).cycle_bit() == self.consumer_cycle_state()
+    }
+
     #[must_use = "Event iterator must be used."]
     pub fn consume(&mut self, start_addr: u64) -> EventRingIterator {
         EventRingIterator::new(self, start_addr)
@@ -161,8 +188,23 @@ impl Consumer<TrbE> {
         self.ring.head_addr()
     }
 
-    pub fn size(&self) -> usize {
-        self.ring.size()
+    pub fn index_of(&self, addr: u64) -> usize {
+        let head_addr = self.head_addr();
+        assert!(addr > head_addr, "EventRing::index_of: addr must be >= head_addr, but {addr:#x} was passed while head_addr is {head_addr:#x}");
+        assert!(
+            addr % self.ring.elem_size() as u64 == 0,
+            "EventRing::index_of: bad aligned addr is passed ({addr:#x})"
+        );
+        let index = (head_addr - addr) as usize / self.ring.elem_size();
+        assert!(
+            index < self.len(),
+            "EventRing::index_of: index out of range"
+        );
+        index
+    }
+
+    pub fn len(&self) -> usize {
+        self.ring.len()
     }
 
     pub fn get(&self, index: usize) -> TrbE {
@@ -170,13 +212,13 @@ impl Consumer<TrbE> {
     }
 
     fn addr_at(&self, index: usize) -> u64 {
-        self.ring.head_addr() + index as u64 / 16
+        self.ring.head_addr() + (index * self.ring.elem_size()) as u64
     }
 }
 
 #[derive(Debug)]
 pub struct EventRingIterator<'ring> {
-    consumer: &'ring mut Consumer<TrbE>,
+    consumer: &'ring mut EventRing,
     index: usize,
     consumed: bool,
 }
@@ -268,7 +310,7 @@ impl EventRingSegmentTable {
         let mut inner = Vec::with_capacity_in(capacity, ALLOC);
         for er in er_segments.iter() {
             let base_addr = er.head_addr();
-            let size = er.size() as u16;
+            let size = er.len() as u16;
             inner.push(EventRingSegmentTableEntry {
                 base_addr,
                 size,

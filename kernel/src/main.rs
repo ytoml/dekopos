@@ -21,6 +21,7 @@ mod mem;
 mod services;
 mod x64;
 
+use crate::devices::interrupts;
 use crate::devices::pci::PciDevice;
 use crate::graphics::{Color, Draw, Position};
 
@@ -52,10 +53,7 @@ ______                     _____ _____
     // kprintln!("Devices successfully scanned!");
 
     let (mmio_base, device) = detect_usb();
-    start_xhc(mmio_base as usize, device);
-    // inspect_memmap();
-    // debug();
-    hlt!();
+    start_xhc(mmio_base as usize, device)
 }
 
 const HELLO_KERNEL: &str = "Hello, Kernel! This is OS kernel crafted with Rust. Have fun and I wish you learn much during implementing this. Good luck!";
@@ -137,8 +135,10 @@ fn inspect_memmap() {
     }
 }
 
-fn start_xhc(mmio_base: usize, device: PciDevice) {
+fn start_xhc(mmio_base: usize, device: PciDevice) -> ! {
     use devices::usb::HostController;
+    use devices::usb::class::Supported;
+
     let mut ctr = unsafe { HostController::new(mmio_base) };
     let pci_config = device.config();
     ctr.init(pci_config);
@@ -146,18 +146,32 @@ fn start_xhc(mmio_base: usize, device: PciDevice) {
 
     // just for debug
     // use devices::interrupts;
-    use devices::pci::msi::Capability;
-    match pci_config.msi_capabilities().capability() {
-        Capability::MsiX(c) => {
-            log::info!("{c:#?}");
-            let table = unsafe { c.table() };
+    // use devices::pci::msi::Capability;
+    // match pci_config.msi_capabilities().capability() {
+    //     Capability::MsiX(c) => {
+    //         log::info!("{c:#?}");
+    //         let table = unsafe { c.table() };
 
-            log::info!("{:#?}", table.read_volatile_at(0));
-            let pba = unsafe { c.pending_bit_array() };
-            log::info!("{pba:?}");
-        }
-        _ => {}
-    }
+    //         log::info!("{:#?}", table.read_volatile_at(0));
+    //         let pba = unsafe { c.pending_bit_array() };
+    //         log::info!("{pba:?}");
+    //     }
+    //     _ => {}
+    // }
+    let _sup = Supported::Mouse(mouse_move);
+    
+    
+
+    interrupts::process_interrupt_messages(&mut ctr)
+}
+
+// TODO:
+fn mouse_move(button: u8, dx: u8, dy: u8) {
+
+}
+
+// TODO:
+fn key_push(modifier: u8, keycode: u8, pressed: bool) {
 }
 
 fn debug() {

@@ -1,7 +1,7 @@
 use heapless::spsc::Queue;
+use log;
 
-use crate::*;
-
+use super::usb::HostController;
 use crate::x64::Msr;
 use x86_64::instructions::interrupts as x64;
 use x86_64::structures::idt::{Entry, HandlerFunc, InterruptDescriptorTable, InterruptStackFrame};
@@ -12,31 +12,30 @@ use x86_64::PrivilegeLevel;
 pub unsafe fn setup_handler() {
     setup_apic_base();
     setup_handler_inner();
-    kprintln!("{:?}", APIC_BASE);
+    log::info!("apic base: {:?}", APIC_BASE);
 }
 
-pub fn process_interrupt_messages() -> ! {
+pub fn process_interrupt_messages(ctr: &mut HostController) -> ! {
     let que = unsafe { int_que_mut() };
     loop {
         x64::disable();
-        if que.len() == 0 {
-            x64::enable_and_hlt();
-        }
-
         if let Some(_msg) = que.dequeue() {
             x64::enable();
+            // TODO: Check message type
             todo!()
+        } else {
+            x64::enable_and_hlt();
         }
     }
 }
 
 static mut IDT: InterruptDescriptorTable = InterruptDescriptorTable::new();
-static mut INT_QUE: Queue<InterruptMessage, { INT_QUE_SIZE }> = Queue::new();
-// access_static_as_mut_unwrap!(int_que_mut, INT_QUE, Queue<InterruptMessage, { INT_QUE_SIZE}>);
+static mut INT_QUE: Queue<Message, { INT_QUE_SIZE }> = Queue::new();
+// access_static_as_mut_unwrap!(int_que_mut, INT_QUE, Queue<Message, { INT_QUE_SIZE}>);
 access_static_mut!(
     int_que_mut,
     INT_QUE,
-    Queue<InterruptMessage, { INT_QUE_SIZE }>
+    Queue<Message, { INT_QUE_SIZE }>
 );
 access_static_mut!(
     interrupt_descriptor_table_mut,
@@ -67,11 +66,21 @@ fn setup_handler_inner() {
 //     unsafe { int_que_option_mut() }.get_or_insert(Queue::new());
 // }
 
-struct InterruptMessage; // TODO
+#[derive(Debug)]
+enum Message {
+    XhciInterrupt,
+}
 
 extern "x86-interrupt" fn xhci(_frame: InterruptStackFrame) {
     todo!(); // look into Event rings and process events
-    notify_end();
+    if unsafe { int_que_mut() }
+        .enqueue(Message::XhciInterrupt)
+        .is_ok()
+    {
+        notify_end();
+    } else {
+        log::warn!("xHCI int handler: Interrupt que is full.");
+    }
 }
 
 static mut APIC_BASE: Option<*mut u8> = None;

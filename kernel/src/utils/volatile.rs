@@ -1,5 +1,5 @@
-use core::alloc::Allocator;
 use core::cell::UnsafeCell;
+use core::fmt::Debug;
 use core::mem::MaybeUninit;
 use core::ops::{Index, IndexMut};
 use core::ptr;
@@ -39,6 +39,14 @@ impl<T: Copy> VolatileCell<T> {
 impl<T: Copy> Clone for VolatileCell<T> {
     fn clone(&self) -> Self {
         Self::new(unsafe { self.value.get().read().assume_init() })
+    }
+}
+
+impl<T: Copy + Debug> Debug for VolatileCell<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("VolatileCell")
+            .field("inner", &self.read_volatile())
+            .finish()
     }
 }
 

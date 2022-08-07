@@ -1,10 +1,10 @@
 use bit_field::BitField;
 
-use crate::devices::usb::mem::XhcMapper;
+use super::mem::PciMapper;
 
 use super::{Bar, PciConfig};
-type ReadWriteSingle<T> = ::xhci::accessor::single::ReadWrite<T, XhcMapper>;
-type ReadWriteArray<T> = ::xhci::accessor::array::ReadWrite<T, XhcMapper>;
+type ReadWriteSingle<T> = ::xhci::accessor::single::ReadWrite<T, PciMapper>;
+type ReadWriteArray<T> = ::xhci::accessor::array::ReadWrite<T, PciMapper>;
 
 /// Note that the structure of MSI Capability Register may differ among computers
 // TODO: rename
@@ -118,7 +118,7 @@ impl MsiXCapability {
         };
         let addr = (base + (self.table_address & !0x7) as u64) as usize;
         let len = (self.message_control.get_table_size() + 1) as usize;
-        unsafe { ReadWriteArray::new(addr, len, XhcMapper) }
+        unsafe { ReadWriteArray::new(addr, len, PciMapper) }
     }
 
     /// # Safety
@@ -137,7 +137,7 @@ impl MsiXCapability {
         let addr = (base + (self.pending_bit_array_address & !0x7) as u64) as usize;
         let len = (self.message_control.get_table_size() + 1) as usize;
         let arr_len = (len + 63) / 64;
-        let inner = unsafe { ReadWriteArray::new(addr, arr_len, XhcMapper) };
+        let inner = unsafe { ReadWriteArray::new(addr, arr_len, PciMapper) };
         PendingBitArray::new(inner, len)
     }
 }

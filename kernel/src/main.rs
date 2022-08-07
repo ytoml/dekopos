@@ -5,6 +5,7 @@
 #![feature(allocator_api)]
 #![allow(unused_macros)]
 #![allow(unreachable_code)] // for debug
+#![allow(dead_code)]
 
 extern crate derive_more;
 
@@ -23,12 +24,11 @@ mod x64;
 
 use crate::devices::interrupts;
 use crate::devices::pci::PciDevice;
-use crate::graphics::{Color, Draw, Position};
 
 pub use crate::utils::PageAligned;
 
 #[no_mangle]
-pub extern "sysv64" fn kernel_main(
+extern "sysv64" fn kernel_main(
     mmap: *const ::common_data::mmap::MemMap,
     fb: *mut ::common_data::graphics::FrameBuffer,
 ) -> ! {
@@ -136,13 +136,13 @@ fn inspect_memmap() {
 }
 
 fn start_xhc(mmio_base: usize, device: PciDevice) -> ! {
-    use devices::usb::HostController;
     use devices::usb::class::Supported;
+    use devices::usb::HostController;
 
     let mut ctr = unsafe { HostController::new(mmio_base) };
     let pci_config = device.config();
     ctr.init(pci_config);
-    ctr.start();
+    let mut ctr = ctr.run();
 
     // just for debug
     // use devices::interrupts;
@@ -159,20 +159,15 @@ fn start_xhc(mmio_base: usize, device: PciDevice) -> ! {
     //     _ => {}
     // }
     let _sup = Supported::Mouse(mouse_move);
-    
-    
 
     interrupts::process_interrupt_messages(&mut ctr)
 }
 
 // TODO:
-fn mouse_move(button: u8, dx: u8, dy: u8) {
-
-}
+fn mouse_move(_button: u8, _dx: u8, _dy: u8) {}
 
 // TODO:
-fn key_push(modifier: u8, keycode: u8, pressed: bool) {
-}
+fn key_push(_modifier: u8, _keycode: u8, _pressed: bool) {}
 
 fn debug() {
     let addr = crate::devices::interrupts::get_apic_addr(0);

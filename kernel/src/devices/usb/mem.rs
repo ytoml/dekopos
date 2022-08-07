@@ -4,23 +4,20 @@ use core::alloc::{AllocError, Allocator, Layout};
 use core::num::NonZeroUsize;
 use core::ptr::NonNull;
 
+use accessor::Mapper;
 use spin::Mutex;
-use xhci::accessor::Mapper;
 
 use crate::utils::{Aligned64, PageAligned};
 use crate::x64;
 
-pub(super) type Vec<T> = alloc::vec::Vec<T, XhcAllocator>;
-pub(super) type Box<T> = alloc::boxed::Box<T, XhcAllocator>;
-pub use alloc::vec;
-
-pub const XHC_ALLOC: XhcAllocator = XhcAllocator;
+pub(super) type ReadWriteArray<T> = accessor::array::ReadWrite<T, UsbMapper>;
+pub(super) type ReadWrite<T> = accessor::single::ReadWrite<T, UsbMapper>;
 
 // Note that this mapper is just for memory-mapped IO
 // and is different from virtual address mapper for page table.
 #[derive(Debug, Clone)]
-pub struct XhcMapper;
-impl Mapper for XhcMapper {
+pub struct UsbMapper;
+impl Mapper for UsbMapper {
     unsafe fn map(&mut self, phys_start: usize, _bytes: usize) -> NonZeroUsize {
         NonZeroUsize::new(phys_start).expect("physical address 0 is passed to mapper.")
     }
@@ -28,9 +25,15 @@ impl Mapper for XhcMapper {
     fn unmap(&mut self, _virt_start: usize, _bytes: usize) {}
 }
 
+pub(super) type Vec<T> = alloc::vec::Vec<T, UsbAllocator>;
+pub(super) type Box<T> = alloc::boxed::Box<T, UsbAllocator>;
+pub type AlignedBox64<T> = alloc::boxed::Box<T, UsbAlignedAllocator<64>>;
+pub type BoundedBox64<T> = alloc::boxed::Box<T, UsbBoundedAllocator<64>>;
+pub type BoundedAlloc64 = UsbBoundedAllocator<64>;
+
 #[derive(Debug, Clone, Copy)]
-pub struct XhcAllocator;
-unsafe impl Allocator for XhcAllocator {
+pub struct UsbAllocator;
+unsafe impl Allocator for UsbAllocator {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         unsafe { heap_mut() }.alloc(layout).ok_or(AllocError)
     }
@@ -40,10 +43,10 @@ unsafe impl Allocator for XhcAllocator {
 
 /// Allocator with static alignment.
 #[derive(Debug, Clone, Copy)]
-pub struct XhcAlignedAllocator<const ALIGN: usize>;
-unsafe impl<const ALIGN: usize> Allocator for XhcAlignedAllocator<ALIGN> {
+pub struct UsbAlignedAllocator<const ALIGN: usize>;
+unsafe impl<const ALIGN: usize> Allocator for UsbAlignedAllocator<ALIGN> {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        XhcAllocator.allocate(layout.align_to(ALIGN).unwrap())
+        UsbAllocator.allocate(layout.align_to(ALIGN).unwrap())
     }
 
     unsafe fn deallocate(&self, _ptr: NonNull<u8>, _layout: Layout) {}
@@ -51,16 +54,16 @@ unsafe impl<const ALIGN: usize> Allocator for XhcAlignedAllocator<ALIGN> {
 
 /// Allocator with dynamic page boundary (indicate to handle Page Size Register, etc.)
 #[derive(Debug, Clone, Copy)]
-pub struct XhcRuntimeAllocator<const ALIGN: usize> {
+pub struct UsbBoundedAllocator<const ALIGN: usize> {
     boundary: u64,
 }
-impl<const ALIGN: usize> XhcRuntimeAllocator<ALIGN> {
+impl<const ALIGN: usize> UsbBoundedAllocator<ALIGN> {
     pub const fn new(boundary: u64) -> Self {
         Self { boundary }
     }
 }
 
-unsafe impl<const ALIGN: usize> Allocator for XhcRuntimeAllocator<ALIGN> {
+unsafe impl<const ALIGN: usize> Allocator for UsbBoundedAllocator<ALIGN> {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         unsafe { heap_mut() }
             .alloc_with_boundary(layout.align_to(ALIGN).unwrap(), self.boundary)

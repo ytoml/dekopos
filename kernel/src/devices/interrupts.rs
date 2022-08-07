@@ -1,6 +1,7 @@
 use heapless::spsc::Queue;
 use log;
 
+use super::usb::status::Running;
 use super::usb::HostController;
 use crate::x64::Msr;
 use x86_64::instructions::interrupts as x64;
@@ -15,14 +16,19 @@ pub unsafe fn setup_handler() {
     log::info!("apic base: {:?}", APIC_BASE);
 }
 
-pub fn process_interrupt_messages(ctr: &mut HostController) -> ! {
+pub fn process_interrupt_messages(ctr: &mut HostController<Running>) -> ! {
     let que = unsafe { int_que_mut() };
     loop {
         x64::disable();
-        if let Some(_msg) = que.dequeue() {
+        if let Some(msg) = que.dequeue() {
             x64::enable();
-            // TODO: Check message type
-            todo!()
+            match msg {
+                Message::XhciInterrupt => {
+                    if let Err(e) = ctr.process_events() {
+                        log::error!("HostController::process_event failed: {e:?}");
+                    }
+                }
+            }
         } else {
             x64::enable_and_hlt();
         }

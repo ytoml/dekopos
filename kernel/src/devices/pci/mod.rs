@@ -1,5 +1,6 @@
 pub mod common;
 pub mod error;
+mod mem;
 pub mod msi;
 pub mod services;
 

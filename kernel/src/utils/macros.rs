@@ -238,9 +238,20 @@ macro_rules! vec_no_realloc {
 
         let elem = $elem;
         let mut vector = Vec::with_capacity_in($capacity, $alloc);
-        #[allow(unused_parens)]
-        for _ in 0..($capacity) {
+        for _ in 0..$capacity {
             vector.push(elem.clone());
+        }
+        vector
+    }};
+}
+
+macro_rules! vec_no_realloc_none {
+    ($capacity:expr; $alloc:expr) => {{
+        extern crate alloc;
+        use alloc::vec::Vec;
+        let mut vector = Vec::with_capacity_in($capacity, $alloc);
+        for _ in 0..$capacity {
+            vector.push(None);
         }
         vector
     }};

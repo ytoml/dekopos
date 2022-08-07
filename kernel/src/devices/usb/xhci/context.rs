@@ -1,15 +1,15 @@
 extern crate alloc;
-use core::pin::Pin;
+
 use core::ptr;
 
 use xhci::context::{Device32Byte, Endpoint32Byte, Input32Byte, InputControl32Byte, Slot32Byte};
 
-use super::mem::XhcRuntimeAllocator;
+use super::usb::mem::BoundedAlloc64;
 
 pub const CONTEXT_SIZE: usize = 32;
 pub const CSZ: bool = CONTEXT_SIZE == 64;
-type Alloc = XhcRuntimeAllocator<64>;
-type Box<T> = alloc::boxed::Box<T, Alloc>;
+const BOUNDARY: u64 = 4096;
+type Alloc = BoundedAlloc64;
 type Vec<T> = alloc::vec::Vec<T, Alloc>;
 pub type DeviceCtx = Device32Byte;
 pub type EndpointCtx = Endpoint32Byte;
@@ -17,26 +17,33 @@ pub type InputCtx = Input32Byte;
 pub type InputCtrlCtx = InputControl32Byte;
 pub type SlotCtx = Slot32Byte;
 
+#[derive(Debug)]
 pub struct DeviceContextBaseAddressArray {
-    // Note: inner.push() can incur reallocation and it will bring difficult bugs.
+    // NOTE: Box contains allocator, thus it's size is > 8 if Allocator is not zero-sized.
+    // Thus, we do not use Box here
     inner: Vec<*mut DeviceCtx>,
 }
 
 impl DeviceContextBaseAddressArray {
-    pub fn new(capacity: usize, boundary: u64) -> Self {
+    pub fn new(capacity: usize) -> Self {
+        assert!(
+            (1..=255).contains(&capacity),
+            "DCBAA must be size in 1..=255, but {capacity} passed."
+        );
         // Rust's null is defined as 0x0 and this fits xHCI specification
-        let inner = vec_no_realloc![ptr::null_mut::<DeviceCtx>(); capacity; Alloc::new(boundary)];
+        let inner = vec_no_realloc![ptr::null_mut::<DeviceCtx>(); capacity; Alloc::new(BOUNDARY)];
 
         // NOTE: Box contains allocator, thus it's size is > 8 if Allocator is not zero-sized.
         Self { inner }
     }
 
-    /// Register context that allocated with 64 bytes alignment in the heap.
-    pub fn register(&mut self, i: usize, device: Pin<Box<DeviceCtx>>) {
+    /// Caller must ensure that the registered [`DeviceCtx`] (pointee on the heap) is managed (not destroyed).
+    pub fn register(&mut self, i: u8, device: *mut DeviceCtx) {
         // Ugly hack: to make allocation simpler, downcasting here.
         // This is due to demandings of filling array with 0 (see implementation of new() above).
         assert!(i > 0, "The very head(index=0) of DCBAA is not for use.");
-        self.inner[i] = Box::into_raw(Pin::into_inner(device));
+        let i: usize = i.into();
+        self.inner[i] = device;
     }
 
     fn as_ptr(&self) -> *const *mut DeviceCtx {

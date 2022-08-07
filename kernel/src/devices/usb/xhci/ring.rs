@@ -1,25 +1,29 @@
 extern crate alloc;
 use core::marker::PhantomData;
 use core::mem;
+use core::pin::Pin;
 
 pub use xhci::ring::trb::command::Allowed as TrbC;
 pub use xhci::ring::trb::event::Allowed as TrbE;
 pub use xhci::ring::trb::transfer::Allowed as TrbT;
 use xhci::ring::trb::Link;
 
-use super::mem::XhcAlignedAllocator;
+use super::usb::mem::UsbAlignedAllocator;
+use super::usb::status::{HcResetted, HcRunning};
+use super::usb::{InterruptRegisters, Operational};
 
-pub type EventRing = Consumer<TrbE>;
 pub type TransferRing = Producer<TrbT>;
 pub type CommandRing = Producer<TrbC>;
 
-type RingAlloc = XhcAlignedAllocator<64>;
+type TrbRaw = [u32; 4];
+type RingAlloc = UsbAlignedAllocator<64>;
 type Vec<T> = alloc::vec::Vec<T, RingAlloc>;
-const ALLOC: RingAlloc = XhcAlignedAllocator::<64>;
+type Box<T> = alloc::boxed::Box<T, RingAlloc>;
+const ALLOC: RingAlloc = UsbAlignedAllocator::<64>;
 
 pub trait SoftwareProduceTrb: Sized {
     fn link_trb() -> Self;
-    fn into_raw(self) -> [u32; 4];
+    fn into_raw(self) -> TrbRaw;
 }
 pub trait SoftwareConsumeTrb {}
 
@@ -35,18 +39,18 @@ fn link_trb_with_toggle() -> Link {
 // XXX: TOTALLY invalid cast
 // 1. enum and its content is not same in terms of its memory layout (they have different size)
 // 2. trb_pointer() functions return "physical" address (currently, it's identity mapping thus ok).
-pub(super) unsafe fn read_trb<Trb>(pointer: u64) -> core::result::Result<Trb, [u32; 4]>
+pub unsafe fn read_trb<Trb>(pointer: u64) -> core::result::Result<Trb, TrbRaw>
 where
-    Trb: TryFrom<[u32; 4], Error = [u32; 4]>,
+    Trb: TryFrom<TrbRaw, Error = TrbRaw>,
 {
-    (pointer as *const [u32; 4]).read().try_into()
+    (pointer as *const TrbRaw).read().try_into()
 }
 
 impl SoftwareProduceTrb for TrbC {
     fn link_trb() -> Self {
         Self::Link(link_trb_with_toggle())
     }
-    fn into_raw(self) -> [u32; 4] {
+    fn into_raw(self) -> TrbRaw {
         self.into_raw()
     }
 }
@@ -55,7 +59,7 @@ impl SoftwareProduceTrb for TrbT {
     fn link_trb() -> Self {
         Self::Link(link_trb_with_toggle())
     }
-    fn into_raw(self) -> [u32; 4] {
+    fn into_raw(self) -> TrbRaw {
         self.into_raw()
     }
 }
@@ -64,28 +68,32 @@ impl SoftwareProduceTrb for TrbT {
 /// Main purpose is to prevent `push` on [`Vec`] which might incur difficult bug
 /// through reallocation (i.e. location changes without notifying ring related registers).
 /// (Event ring can be dynamically sized, but it will be managed through [`EventRingSegmentTable`] and [`Ring`] will be inctanciated per segment.)
-/// [`[u32; 4]`] is used instead of [`Allowed`] from [`xhci`] crate, because [`Allowed`] is enum and
+/// [`TrbRaw`] is used instead of [`Allowed`] from [`xhci`] crate, because [`Allowed`] is enum and
 /// it has metadata to distinguish variant, thus different size as TRB.
 #[derive(Debug)]
-struct Ring<Trb> {
-    buf: Vec<[u32; 4]>,
+struct Ring<Trb: TryFrom<TrbRaw>> {
+    buf: Pin<Box<[TrbRaw]>>,
     _phantom: PhantomData<Trb>,
 }
-impl<Trb> Ring<Trb> {
+impl<Trb: TryFrom<TrbRaw>> Ring<Trb> {
     fn new(capacity: usize) -> Self {
         Self {
-            buf: vec_no_realloc![[0; 4]; capacity; ALLOC],
+            buf: Pin::new(vec_no_realloc![[0; 4]; capacity; ALLOC].into_boxed_slice()),
             _phantom: PhantomData::<Trb>,
         }
     }
 
     /// Return the head address of ring.
-    fn as_ptr(&self) -> *const [u32; 4] {
+    fn as_ptr(&self) -> *const TrbRaw {
         self.buf.as_ptr()
     }
 
     fn head_addr(&self) -> u64 {
         self.as_ptr() as u64
+    }
+
+    fn addr_at(&self, index: usize) -> u64 {
+        self.head_addr() + (index * self.elem_size()) as u64
     }
 
     fn len(&self) -> usize {
@@ -101,7 +109,7 @@ impl<Trb> Ring<Trb> {
     }
 }
 
-impl<Trb: SoftwareProduceTrb> Ring<Trb> {
+impl<Trb: TryFrom<TrbRaw> + SoftwareProduceTrb> Ring<Trb> {
     fn set(&mut self, trb: Trb, index: usize) {
         self.buf[index] = trb.into_raw();
     }
@@ -118,12 +126,34 @@ impl Ring<TrbE> {
 }
 
 #[derive(Debug)]
-pub struct Producer<Trb: SoftwareProduceTrb> {
+pub struct Producer<Trb: TryFrom<TrbRaw> + SoftwareProduceTrb> {
     ring: Ring<Trb>,
     cycle_bit: bool,
     write_index: usize,
 }
-impl<Trb: SoftwareProduceTrb> Producer<Trb> {
+impl Producer<TrbC> {
+    /// # Safety
+    /// User must ensure [`run_stop`] of USBCMD register is 0 when constructing this struct.
+    /// If not, the xHCI's behavior will be undefined.
+    /// See 5.4.5 of xHCI specification.
+    pub unsafe fn new(capacity: usize, op: &mut Operational, _usb_status: &HcResetted) -> Self {
+        assert!(capacity >= 2, "TRB producer must have capacity >= 2, due to its requirement of Link TRB in last entry.");
+
+        let cr = Self {
+            ring: Ring::new(capacity),
+            cycle_bit: true,
+            write_index: 0,
+        };
+        op.crcr.update_volatile(|r| {
+            r.set_command_ring_pointer(cr.head_addr());
+            // set same cycle bit (true) as command ring
+            r.set_ring_cycle_state();
+        });
+        cr
+    }
+}
+
+impl Producer<TrbT> {
     pub fn new(capacity: usize) -> Self {
         assert!(capacity >= 2, "TRB producer must have capacity >= 2, due to its requirement of Link TRB in last entry.");
         Self {
@@ -132,15 +162,21 @@ impl<Trb: SoftwareProduceTrb> Producer<Trb> {
             write_index: 0,
         }
     }
+}
 
-    pub fn push(&mut self, trb: Trb) {
+impl<Trb: TryFrom<TrbRaw> + SoftwareProduceTrb> Producer<Trb> {
+    /// This push returns address of pushed TRB for managing relationships
+    /// between event and its issuer.
+    pub fn push(&mut self, trb: Trb) -> u64 {
         self.ring.set(trb, self.write_index);
+        let trb_addr = self.ring.addr_at(self.write_index);
         self.write_index += 1;
         if self.write_index == self.ring.last_index() {
             let link_trb = Trb::link_trb();
             self.ring.set(link_trb, self.write_index);
             self.write_index = 0;
         }
+        trb_addr
     }
 
     pub fn producer_cycle_state(&self) -> bool {
@@ -153,17 +189,48 @@ impl<Trb: SoftwareProduceTrb> Producer<Trb> {
 }
 
 #[derive(Debug)]
-pub struct Consumer<Trb: SoftwareConsumeTrb> {
-    ring: Ring<Trb>,
+pub struct EventRing {
+    ring: Ring<TrbE>,
+    seg_table: EventRingSegmentTable,
     cycle_bit: bool,
 }
 
-impl Consumer<TrbE> {
-    pub fn new(capacity: usize) -> Self {
+impl EventRing {
+    /// Allocate event ring of single segment.
+    ///
+    /// # Safety
+    /// User must ensure [`run_stop`] of USBCMD register is 0 when constructing this struct.
+    /// If not, the xHCI's behavior will be undefined.
+    /// See 5.5.2 of xHCI specification.
+    pub unsafe fn new_primary(
+        capacity: usize,
+        intr: &mut InterruptRegisters,
+        _usb_status: &HcResetted,
+    ) -> Self {
+        let ring = Ring::new(capacity);
+        let seg_table = EventRingSegmentTable::new(&[&ring]);
+
+        intr.update_volatile_at(0, |r| {
+            r.erstsz.set(seg_table.size());
+            r.erdp.set_event_ring_dequeue_pointer(ring.head_addr());
+            r.erstba.set(seg_table.head_addr());
+        });
         Self {
-            ring: Ring::new(capacity),
+            ring,
+            seg_table,
             cycle_bit: true,
         }
+    }
+
+    /// User must ensure event ring for primary interrupter is already created and registerd,
+    /// and [`run_stop`] of USBCMD register is 1 when constructing this struct.
+    pub unsafe fn new_secondary(
+        _capacity: usize,
+        _op: &mut Operational,
+        _intr: &mut InterruptRegisters,
+        _usb_status: &HcRunning,
+    ) -> Self {
+        todo!()
     }
 
     fn consumer_cycle_state(&self) -> bool {
@@ -211,8 +278,12 @@ impl Consumer<TrbE> {
         self.ring.get(index)
     }
 
+    pub fn seg_table_head_addr(&self) -> u64 {
+        self.seg_table.head_addr()
+    }
+
     fn addr_at(&self, index: usize) -> u64 {
-        self.ring.head_addr() + (index * self.ring.elem_size()) as u64
+        self.ring.addr_at(index)
     }
 }
 
@@ -223,7 +294,7 @@ pub struct EventRingIterator<'ring> {
     consumed: bool,
 }
 impl<'ring> EventRingIterator<'ring> {
-    fn new(consumer: &'ring mut Consumer<TrbE>, start_addr: u64) -> Self {
+    fn new(consumer: &'ring mut EventRing, start_addr: u64) -> Self {
         // Because ring buffer always 64 byte aligned, this operation is
         // equivalent to masking last 4 bit of `start_addr` and directly
         // access via memory address.
@@ -290,12 +361,12 @@ impl EventRingSegmentTableEntry {
 }
 
 #[derive(Debug)]
-pub struct EventRingSegmentTable {
+struct EventRingSegmentTable {
     // Note: inner.push() can incur reallocation and it will bring difficult bugs.
     inner: Vec<EventRingSegmentTableEntry>,
 }
 impl EventRingSegmentTable {
-    pub fn new(er_segments: &[&EventRing]) -> Self {
+    fn new(er_segments: &[&Ring<TrbE>]) -> Self {
         let capacity = er_segments.len();
         assert!(
             capacity > 0,
@@ -309,11 +380,9 @@ impl EventRingSegmentTable {
 
         let mut inner = Vec::with_capacity_in(capacity, ALLOC);
         for er in er_segments.iter() {
-            let base_addr = er.head_addr();
-            let size = er.len() as u16;
             inner.push(EventRingSegmentTableEntry {
-                base_addr,
-                size,
+                base_addr: er.head_addr(),
+                size: er.len().try_into().unwrap(),
                 ..Default::default()
             });
         }

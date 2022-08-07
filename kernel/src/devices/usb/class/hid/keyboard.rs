@@ -1,7 +1,7 @@
 use bitvec::prelude::*;
 
 use crate::devices::usb::class::OnDataReceived;
-use crate::devices::usb::mem::{Vec, XhcAllocator};
+use crate::devices::usb::mem::{UsbAllocator, Vec};
 
 pub type Observer = fn(u8, u8, bool);
 
@@ -15,7 +15,7 @@ impl Keyboard {
     pub fn new(observer: Observer) -> Self {
         Self {
             observer,
-            prev_buf: vec_no_realloc![0u8; Self::BUFSIZE; XhcAllocator],
+            prev_buf: vec_no_realloc![0u8; Self::BUFSIZE; UsbAllocator],
         }
     }
     pub fn notify_push(&self, modifier: u8, keycode: u8, pressed: bool) {
@@ -29,9 +29,9 @@ impl OnDataReceived for Keyboard {
         let modifier = buf[0];
         let mut cur = bitarr![u64, Lsb0; 0; 256];
         let mut prev = bitarr![u64, Lsb0; 0; 256];
-        for i in 2..=7 {
-            *cur.get_mut(buf[i] as usize).unwrap() = true;
-            *prev.get_mut(buf[i] as usize).unwrap() = true;
+        for index in buf.iter().take(7 + 1).skip(2).map(|&i| i as usize) {
+            *cur.get_mut(index).unwrap() = true;
+            *prev.get_mut(index).unwrap() = true;
         }
         let changed = prev ^ cur;
         let pressed = prev & cur;

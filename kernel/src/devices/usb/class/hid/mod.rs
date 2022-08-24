@@ -1,11 +1,10 @@
 extern crate alloc;
 
-use xhci::context::EndpointType;
 use xhci::ring::trb::transfer::{Direction, SetupStage, TransferType};
 
 use super::{ClassDriver, OnDataReceived};
 use crate::devices::usb::data_types::{
-    EndpointConfig, EndpointId, EndpointIndex, Recipient, RequestType, Type,
+    EndpointConfig, EndpointId, EndpointType, Recipient, RequestType, Type,
 };
 use crate::devices::usb::mem::{UsbAllocator, Vec};
 use crate::devices::usb::{Error, Result};
@@ -38,7 +37,7 @@ impl Default for Phase {
 #[derive(Debug)]
 pub(super) struct Hid<Impl: OnDataReceived> {
     buf: Vec<u8>,
-    if_index: EndpointIndex,
+    if_index: u16,
     init_phase: Phase,
     int_in: EndpointId,
     int_out: EndpointId,
@@ -46,7 +45,7 @@ pub(super) struct Hid<Impl: OnDataReceived> {
 }
 
 impl<Impl: OnDataReceived> Hid<Impl> {
-    pub fn new(if_index: EndpointIndex, body: Impl) -> Self {
+    pub fn new(if_index: u16, body: Impl) -> Self {
         Self {
             buf: vec_no_realloc![0u8; Impl::BUFSIZE; UsbAllocator],
             if_index,
@@ -64,14 +63,11 @@ impl<Impl: OnDataReceived> Hid<Impl> {
 impl<Impl: OnDataReceived> ClassDriver for Hid<Impl> {
     fn set_endpoints(&mut self, configs: &[EndpointConfig]) {
         for config in configs.iter() {
-            match config.ty {
-                EndpointType::InterruptIn => {
-                    self.int_in = config.id;
+            if let EndpointType::Interrupt = config.ty {
+                match config.id.direction() {
+                    Direction::In => self.int_in = config.id,
+                    Direction::Out => self.int_out = config.id,
                 }
-                EndpointType::InterruptOut => {
-                    self.int_out = config.id;
-                }
-                _ => {}
             }
         }
     }
@@ -98,7 +94,7 @@ impl<Impl: OnDataReceived> ClassDriver for Hid<Impl> {
             .set_length(0)
             // boot protocol
             .set_value(0)
-            .set_index(self.if_index.into())
+            .set_index(self.if_index)
             .set_transfer_type(TransferType::No);
         self.init_phase = Phase::Stage1;
         Ok(())

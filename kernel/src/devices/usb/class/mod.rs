@@ -1,9 +1,10 @@
 use self::hid::keyboard::Keyboard;
 use self::hid::mouse::Mouse;
 use self::hid::Hid;
-use super::data_types::{EndpointConfig, EndpointId, EndpointIndex};
+use super::data_types::{EndpointConfig, EndpointId};
 use super::mem::{Box, UsbAllocator};
 use super::Result;
+use crate::devices::usb::data_types::InterfaceDescriptor;
 
 pub(super) const HID_BUFSIZE: usize = 1024;
 
@@ -23,24 +24,26 @@ trait OnDataReceived {
     fn on_data_received(&mut self, buf: &[u8]);
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum Supported {
-    Mouse(fn(button: u8, dx: u8, dy: u8)),
-    Keyboard(fn(modifier: u8, keycode: u8, press: bool)),
-}
-impl Supported {
-    pub(super) fn build(self, interface_index: EndpointIndex) -> Box<dyn ClassDriver> {
-        match self {
-            Self::Mouse(observer) => Box::new_in(
-                Hid::new(interface_index, Mouse::new(observer)),
-                UsbAllocator,
-            ) as Box<dyn ClassDriver>,
-            Self::Keyboard(observer) => Box::new_in(
-                Hid::new(interface_index, Keyboard::new(observer)),
-                UsbAllocator,
-            ) as Box<dyn ClassDriver>,
+pub fn new_class_driver(if_desc: InterfaceDescriptor) -> Box<dyn ClassDriver> {
+    // TODO: better interface to register observer functions?
+    if if_desc.interface_class() == 3 && if_desc.interface_sub_class() == 1
+    // HID boot interface
+    {
+        match if_desc.interface_protocol() {
+            1 => {
+                let body = Keyboard::new(crate::key_push);
+                let hid = Hid::new(if_desc.interface_number().into(), body);
+                return Box::new_in(hid, UsbAllocator) as Box<dyn ClassDriver>;
+            }
+            2 => {
+                let body = Mouse::new(crate::mouse_move);
+                let hid = Hid::new(if_desc.interface_number().into(), body);
+                return Box::new_in(hid, UsbAllocator) as Box<dyn ClassDriver>;
+            }
+            _ => {}
         }
     }
+    panic!("Unsupported interface.");
 }
 
 mod hid;

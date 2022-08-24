@@ -33,7 +33,6 @@ extern "sysv64" fn kernel_main(
     fb: *mut ::common_data::graphics::FrameBuffer,
 ) -> ! {
     unsafe { services::init(mmap, fb) };
-    kprintln!("{}", HELLO_KERNEL);
     kprintln!(
         r"
 ______                     _____ _____ 
@@ -46,6 +45,7 @@ ______                     _____ _____
                     |_|                          
     "
     );
+    kprintln!("{}", HELLO_KERNEL);
     // draw_something();
     // kprintln!("Screen successfully rendered!");
 
@@ -136,7 +136,6 @@ fn inspect_memmap() {
 }
 
 fn start_xhc(mmio_base: usize, device: PciDevice) -> ! {
-    use devices::usb::class::Supported;
     use devices::usb::HostController;
 
     let mut ctr = unsafe { HostController::new(mmio_base) };
@@ -158,7 +157,6 @@ fn start_xhc(mmio_base: usize, device: PciDevice) -> ! {
     //     }
     //     _ => {}
     // }
-    let _sup = Supported::Mouse(mouse_move);
 
     interrupts::process_interrupt_messages(&mut ctr)
 }

@@ -24,6 +24,7 @@ const ALLOC: RingAlloc = UsbAlignedAllocator::<64>;
 pub trait SoftwareProduceTrb: Sized {
     fn link_trb() -> Self;
     fn into_raw(self) -> TrbRaw;
+    fn set_cycle_bit(&mut self, pcs: bool);
 }
 pub trait SoftwareConsumeTrb {}
 
@@ -53,6 +54,13 @@ impl SoftwareProduceTrb for TrbC {
     fn into_raw(self) -> TrbRaw {
         self.into_raw()
     }
+    fn set_cycle_bit(&mut self, pcs: bool) {
+        if pcs {
+            self.set_cycle_bit();
+        } else {
+            self.clear_cycle_bit();
+        }
+    }
 }
 impl SoftwareConsumeTrb for TrbE {}
 impl SoftwareProduceTrb for TrbT {
@@ -61,6 +69,13 @@ impl SoftwareProduceTrb for TrbT {
     }
     fn into_raw(self) -> TrbRaw {
         self.into_raw()
+    }
+    fn set_cycle_bit(&mut self, pcs: bool) {
+        if pcs {
+            self.set_cycle_bit();
+        } else {
+            self.clear_cycle_bit();
+        }
     }
 }
 
@@ -167,7 +182,11 @@ impl Producer<TrbT> {
 impl<Trb: TryFrom<TrbRaw> + SoftwareProduceTrb> Producer<Trb> {
     /// This push returns address of pushed TRB for managing relationships
     /// between event and its issuer.
-    pub fn push(&mut self, trb: Trb) -> u64 {
+    /// Note that this function always sets producer cycle state to cycle bit of TRB,
+    /// thus caller doesn't have to take care of it.
+    pub fn push(&mut self, mut trb: Trb) -> u64 {
+        trb.set_cycle_bit(self.producer_cycle_state());
+
         self.ring.set(trb, self.write_index);
         let trb_addr = self.ring.addr_at(self.write_index);
         self.write_index += 1;

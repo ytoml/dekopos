@@ -34,5 +34,4 @@ const ER_SEG_TABLE_SIZE: usize = 1;
 const TR_SIZE: usize = 32;
 // Only primary interrupter is used now.
 const N_INTR: usize = 1;
-const N_PORTS: usize = 256;
 const MAX_SLOTS: u8 = 8;

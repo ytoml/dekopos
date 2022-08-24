@@ -87,6 +87,7 @@ auto_repr_tryfrom! {
 pub struct SetupData {
     pub request_type: RequestType,
     pub request: RequestCode,
+    /// wIndex has different usage. See 9.3.4 in USB 3.2 specification.
     pub value: u16,
     pub index: u16,
     pub length: u16,

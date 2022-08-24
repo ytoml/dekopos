@@ -250,7 +250,7 @@ impl PciConfig {
                     Bar::Memory64 { addr, prefetchable }
                 }
             }
-            _ => panic!("Invalid bar specification found. Some fault might occur in PCI configuration space."),
+            _ => panic!("Invalid bar specification found (id={id}, bar= {bar:#x}). Some fault might occur in PCI configuration space."),
         }
     }
 

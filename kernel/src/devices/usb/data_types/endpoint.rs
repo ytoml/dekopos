@@ -1,5 +1,7 @@
 use bit_field::BitField;
-use xhci::{context::EndpointType, ring::trb::transfer::Direction};
+use xhci::ring::trb::transfer::Direction;
+
+use crate::devices::usb::Error;
 
 auto_unit_from! {
     /// wIndex
@@ -24,17 +26,26 @@ impl EndpointIndex {
 }
 
 auto_unit_from! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct EndpointId(u8);
 }
 impl TryFrom<u8> for EndpointId {
     type Error = u8;
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
+    fn try_from(value: u8) -> core::result::Result<Self, Self::Error> {
         if value >= 32 {
             Err(value)
         } else {
             Ok(EndpointId(value))
         }
+    }
+}
+
+impl core::fmt::Debug for EndpointId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("EndpointId")
+            .field("ep", &self.as_index())
+            .field("direction", &self.direction())
+            .finish()
     }
 }
 
@@ -60,11 +71,34 @@ impl EndpointId {
     pub const DEFAULT_CONTROL: Self = Self(1); // index = 0, in_direction
 }
 
+auto_repr_tryfrom! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub enum EndpointType: u8 {
+        Control = 0,
+        Isochronous = 1,
+        Bulk = 2,
+        Interrupt = 3,
+    }
+}
+impl TryFrom<::xhci::context::EndpointType> for EndpointType {
+    type Error = Error;
+    fn try_from(value: ::xhci::context::EndpointType) -> core::result::Result<Self, Self::Error> {
+        type T = ::xhci::context::EndpointType;
+        match value {
+            T::NotValid => Err(Error::EndpointIsNotValid),
+            T::Control => Ok(Self::Control),
+            T::BulkIn | T::BulkOut => Ok(Self::Bulk),
+            T::IsochIn | T::IsochOut => Ok(Self::Bulk),
+            T::InterruptIn | T::InterruptOut => Ok(Self::Interrupt),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EndpointConfig {
     pub id: EndpointId,
-    pub ty: EndpointType,
-    pub max_backet_size: i32,
+    pub ty: EndpointType, // EndpointType and EndpointId have duplicated attributes(direction)
+    pub max_backet_size: u16,
     /// Control interval for 125*2^(interval-1) us
-    pub interval: i32,
+    pub interval: u8,
 }

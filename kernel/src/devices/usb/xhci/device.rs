@@ -42,6 +42,17 @@ impl Device {
         }
     }
 
+    pub fn new_with_ep0_enabled(
+        dev_ctx: Pin<BoundedBox64<DeviceCtx>>,
+        inp_ctx: Pin<BoundedBox64<InputCtx>>,
+    ) -> Self {
+        let mut device = Self::new(dev_ctx, inp_ctx);
+        device
+            .new_transfer_ring_at(DeviceContextIndex::EP0)
+            .unwrap();
+        device
+    }
+
     pub fn get_mut_transfer_ring_at(
         &mut self,
         dci: DeviceContextIndex,
@@ -160,7 +171,7 @@ impl Device {
     pub fn on_interrupt_completed(&mut self, id: EndpointId) -> Result<()> {
         self.class_drivers[id.as_index()]
             .as_mut()
-            .ok_or(Error::ClassDriverNotFoundWithIndex(id.as_index()))?
+            .ok_or(Error::ClassDriverNotAllocatedForEndpoint(id.as_index()))?
             .on_interrupt_completed(id)
     }
 

@@ -28,10 +28,12 @@ unsafe fn io_read32(addr: u16) -> u32 {
 pub trait IoAccess {
     fn addr(&self) -> IoAddr;
 
+    #[inline(never)]
     unsafe fn write(&self, value: u32) {
         io_write32(self.addr().0, value)
     }
 
+    #[inline(never)]
     unsafe fn read(&self) -> u32 {
         io_read32(self.addr().0)
     }

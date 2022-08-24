@@ -18,6 +18,7 @@ pub unsafe fn setup_handler() {
 
 pub fn process_interrupt_messages(ctr: &mut HostController<Running>) -> ! {
     let que = unsafe { int_que_mut() };
+    log::info!("{que:?}");
     loop {
         x64::disable();
         if let Some(msg) = que.dequeue() {
@@ -64,6 +65,7 @@ fn setup_handler_inner() {
     let idt = unsafe { interrupt_descriptor_table_mut() };
     idt[XHCI_INTVEC_ID] = hdl_entry;
     idt.load();
+    log::info!("Interrupt handler set.");
     // init_int_que();
 }
 
@@ -78,7 +80,8 @@ enum Message {
 }
 
 extern "x86-interrupt" fn xhci(_frame: InterruptStackFrame) {
-    todo!(); // look into Event rings and process events
+    // look into Event rings and process events
+    log::warn!("interruptor entered.");
     if unsafe { int_que_mut() }
         .enqueue(Message::XhciInterrupt)
         .is_ok()

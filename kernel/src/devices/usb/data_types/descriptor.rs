@@ -23,6 +23,7 @@ auto_repr_tryfrom! {
     }
 }
 
+// TODO: getter with flexible type
 macro_rules! descriptor {
     (
         $v:vis $desc_type:ident $(-$suffix:ident)? <$bytes:literal>
@@ -60,6 +61,7 @@ macro_rules! descriptor {
                 }
             }
             impl [<$desc_type Descriptor $($suffix)?>] {
+                pub const SIZE: usize = $bytes;
                 #[allow(unused)]
                 $v const fn length(&self) -> u8 {
                     $bytes
@@ -116,6 +118,17 @@ impl DeviceDescriptor {
         2 << self.0[7]
     }
 }
+
+descriptor!(
+    pub Configuration<9>,
+    4 = num_interfaces,
+    5 = configuration_value # "Value to use and argument to the SetConfiguration request to select this configuration.",
+    6 = configuration_index # "Index of string descriptor describing this configuration.",
+    7 = bitmap_attributes, // Ignoring verification
+    8 = max_power # "Maximum power consumption in mA."
+    [double]
+    2 = total_length # "Total length(bytes) of data written for this configuration. It includes the size of configuration descriptor itself.",
+);
 
 descriptor!(
     pub Interface<9>,
@@ -254,8 +267,18 @@ pub struct ConfigDescReader<'a> {
     cursor: usize,
 }
 impl<'a> ConfigDescReader<'a> {
-    pub const fn new(buf: &'a [u8]) -> Self {
-        Self { buf, cursor: 0 }
+    /// Note that this constructor try to read first configuration descriptor.
+    /// Thus, caller should not consume beforehand.
+    pub fn new(buf: &'a [u8], unused_tail_len: usize) -> Result<Self> {
+        let written_len = buf.len() - unused_tail_len;
+        let _desc: ConfigurationDescriptor = buf.try_into().map_err(|buf| {
+            log::debug!("Configuration Descriptor read failed: {buf:?}");
+            Error::InvalidDescriptor
+        })?;
+        Ok(Self {
+            buf: &buf[ConfigurationDescriptor::SIZE..written_len],
+            cursor: 0,
+        })
     }
 }
 impl<'buf> Iterator for ConfigDescReader<'buf> {

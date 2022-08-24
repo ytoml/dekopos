@@ -22,7 +22,7 @@ use self::mem::ReadWriteArray;
 
 type Doorbell = ReadWrite<::xhci::registers::doorbell::Register>;
 type PortRegisters = ReadWriteArray<::xhci::registers::PortRegisterSet>;
-type InterruptRegisters = ReadWriteArray<::xhci::registers::InterruptRegisterSet>;
+type InterrupterRegisters = ::xhci::registers::InterrupterRegisterSet<UsbMapper>;
 type Capability = ::xhci::registers::Capability<UsbMapper>;
 type Operational = ::xhci::registers::Operational<UsbMapper>;
 type Runtime = ::xhci::registers::Runtime<UsbMapper>;

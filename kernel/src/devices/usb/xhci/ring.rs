@@ -10,7 +10,7 @@ use xhci::ring::trb::Link;
 
 use super::usb::mem::UsbAlignedAllocator;
 use super::usb::status::{HcResetted, HcRunning};
-use super::usb::{InterruptRegisters, Operational};
+use super::usb::{InterrupterRegisters, Operational};
 
 pub type TransferRing = Producer<TrbT>;
 pub type CommandRing = Producer<TrbC>;
@@ -223,17 +223,23 @@ impl EventRing {
     /// See 5.5.2 of xHCI specification.
     pub unsafe fn new_primary(
         capacity: usize,
-        intr: &mut InterruptRegisters,
+        intr: &mut InterrupterRegisters,
         _usb_status: &HcResetted,
     ) -> Self {
         let ring = Ring::new(capacity);
         let seg_table = EventRingSegmentTable::new(&[&ring]);
 
-        intr.update_volatile_at(0, |r| {
-            r.erstsz.set(seg_table.size());
-            r.erdp.set_event_ring_dequeue_pointer(ring.head_addr());
-            r.erstba.set(seg_table.head_addr());
+        let prim = &mut intr.interrupter_mut(0);
+        prim.erstsz.update_volatile(|erstsz| {
+            erstsz.set(seg_table.size());
         });
+        prim.erdp.update_volatile(|erdp| {
+            erdp.set_event_ring_dequeue_pointer(ring.head_addr());
+        });
+        prim.erstba.update_volatile(|erstba| {
+            erstba.set(seg_table.head_addr());
+        });
+
         Self {
             ring,
             seg_table,
@@ -246,7 +252,7 @@ impl EventRing {
     pub unsafe fn new_secondary(
         _capacity: usize,
         _op: &mut Operational,
-        _intr: &mut InterruptRegisters,
+        _intr: &mut InterrupterRegisters,
         _usb_status: &HcRunning,
     ) -> Self {
         todo!()

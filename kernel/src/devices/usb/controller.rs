@@ -9,7 +9,7 @@ use super::status::{HcOsOwned, HcStatus, Resetted, Running};
 use super::xhci::context;
 use super::xhci::ring::{CommandRing, EventRing, TrbC};
 use super::{
-    Capability, Doorbell, InterruptRegisters, Operational, PortRegisters, Runtime, CR_SIZE,
+    Capability, Doorbell, InterrupterRegisters, Operational, PortRegisters, Runtime, CR_SIZE,
     ER_SIZE, MAX_SLOTS, N_INTR,
 };
 use crate::devices::interrupts;
@@ -31,7 +31,7 @@ pub struct Controller {
     op: Operational,
     rt: Runtime,
 
-    intr_regs: InterruptRegisters,
+    intr_regs: InterrupterRegisters,
     n_intr: usize,
 
     cr: CommandRing,
@@ -62,8 +62,9 @@ impl HostController<Running> {
             .controller
             .intr_regs
             // TODO: Multiple event rings
-            .read_volatile_at(0)
+            .interrupter(0)
             .erdp
+            .read_volatile()
             .event_ring_dequeue_pointer();
         self.er.is_unprocessed(dequeue_pointer)
     }
@@ -72,8 +73,9 @@ impl HostController<Running> {
         let start_addr = self
             .controller
             .intr_regs
-            .read_volatile_at(0)
+            .interrupter(0)
             .erdp
+            .read_volatile()
             .event_ring_dequeue_pointer();
         let mut events = self.er.consume(start_addr);
         for event in &mut events {
@@ -85,11 +87,12 @@ impl HostController<Running> {
         // And ERDP[3] is event handler busy bit with `rw1c`, thus write this back without any changes too.
         let seg_ix_and_handler_busy = start_addr.get_bits(0..=3);
         let dequeue_pointer = events.dequeue_pointer() | seg_ix_and_handler_busy;
-        self.controller.intr_regs.update_volatile_at(0, |prim| {
-            if prim.erdp.event_handler_busy() {
-                prim.erdp.clear_event_handler_busy();
+        let prim = &mut self.controller.intr_regs.interrupter_mut(0);
+        prim.erdp.update_volatile(|erdp| {
+            if erdp.event_handler_busy() {
+                erdp.clear_event_handler_busy();
             }
-            prim.erdp.set_event_ring_dequeue_pointer(dequeue_pointer);
+            erdp.set_event_ring_dequeue_pointer(dequeue_pointer);
         });
         Ok(())
     }
@@ -108,7 +111,7 @@ impl HostController<Resetted> {
             operational: mut op,
             port_register_set: port_regs,
             runtime: rt,
-            interrupt_register_set: mut intr_regs,
+            interrupter_register_set: mut intr_regs,
             .. // ignoring doorbell (manually construct later again)
         } = unsafe { Registers::new(mmio_base, UsbMapper) };
 
@@ -245,10 +248,13 @@ impl Controller {
         self.setup_interrupters(pci_config);
     }
     fn setup_interrupters(&mut self, pci_config: PciConfig) {
-        for i in 0..self.n_intr {
-            self.intr_regs.update_volatile_at(i, |prim| {
-                prim.imod.set_interrupt_moderation_interval(4000); // 1ms
-                prim.iman.clear_interrupt_pending().set_interrupt_enable();
+        for index in 0..self.n_intr {
+            let intr = &mut self.intr_regs.interrupter_mut(index);
+            intr.imod.update_volatile(|imod| {
+                imod.set_interrupt_moderation_interval(4000); // 1ms
+            });
+            intr.iman.update_volatile(|iman| {
+                iman.clear_interrupt_pending().set_interrupt_enable();
             });
         }
         self.op.usbcmd.update_volatile(|r| {
